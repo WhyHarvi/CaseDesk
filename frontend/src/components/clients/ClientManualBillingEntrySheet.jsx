@@ -31,7 +31,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
   const [recordedConfirmation, setRecordedConfirmation] = useState(null);
   const [mode, setMode] = useState("existing");
   const [targetKind, setTargetKind] = useState("invoice");
-  const [form, setForm] = useState({ invoiceId: "", appointmentId: "", caseId: "", paymentType: "", description: "", chargeAmount: "", amount: "", method: "ETransfer", transactionReference: "", paymentDate: today(), note: "", idempotencyKey: newKey() });
+  const [form, setForm] = useState({ invoiceId: "", appointmentId: "", caseId: "", paymentType: "", description: "", chargeAmount: "", amount: "", method: "ETransfer", transactionReference: "", paymentDate: today(), note: "", idempotencyKey: newKey(), customLedgerId: "" });
 
   useEffect(() => {
     if (!open) return;
@@ -79,6 +79,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
           paymentDate: scopedResult.today || today(),
           note: "",
           idempotencyKey: newKey(),
+          customLedgerId: "",
         });
       })
       .catch((reason) => { if (active) setError(reason.response?.data?.message || "Payment options could not be loaded."); })
@@ -97,6 +98,11 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
   // still requires it for every method.
   const isAppointmentPaymentEntry = mode !== "new" && targetKind === "appointment";
   const requiresApproval = form.method === "Cash" || Boolean(options?.approvalRequiredForEntries && !isAppointmentPaymentEntry);
+  // Ledger tagging only means anything for case billing — a custom ledger
+  // is matched off a case's caseType, and appointments (consultation holds)
+  // were never wired to one.
+  const showLedgerPicker = !isAppointmentPaymentEntry && Boolean(options?.ledgers?.length);
+  const selectedLedger = options?.ledgers?.find((item) => item.id === form.customLedgerId);
 
   function update(key, value) { setForm((current) => ({ ...current, [key]: value })); }
 
@@ -106,10 +112,10 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
     setConfirmPaidOverride(false);
     if (kind === "invoice") {
       const item = options?.invoices?.[0];
-      setForm((current) => ({ ...current, invoiceId: item?.id || "", amount: item ? String(Number(item.balance)) : "", transactionReference: "", method: fixedMethod || "ETransfer", idempotencyKey: newKey() }));
+      setForm((current) => ({ ...current, invoiceId: item?.id || "", amount: item ? String(Number(item.balance)) : "", transactionReference: "", method: fixedMethod || "ETransfer", customLedgerId: "", idempotencyKey: newKey() }));
     } else {
       const item = availableAppointments[0];
-      setForm((current) => ({ ...current, appointmentId: item?.id || "", amount: item?.paymentHold?.amount ? String(Number(item.paymentHold.amount)) : String(Number(options?.consultationFee || 0) || ""), transactionReference: item?.paymentHold?.manualPaymentReference || "", method: fixedMethod || visiblePaymentMethod(item?.paymentHold?.paymentMethod), idempotencyKey: newKey() }));
+      setForm((current) => ({ ...current, appointmentId: item?.id || "", amount: item?.paymentHold?.amount ? String(Number(item.paymentHold.amount)) : String(Number(options?.consultationFee || 0) || ""), transactionReference: item?.paymentHold?.manualPaymentReference || "", method: fixedMethod || visiblePaymentMethod(item?.paymentHold?.paymentMethod), customLedgerId: "", idempotencyKey: newKey() }));
     }
   }
 
@@ -148,6 +154,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
         note: form.note.trim() || undefined,
         idempotencyKey: form.idempotencyKey,
         overrideFreeConsultation: Boolean(selectedAppointment?.isFreeConsultation && confirmPaidOverride),
+        customLedgerId: showLedgerPicker && form.customLedgerId ? form.customLedgerId : undefined,
       });
       await onSaved?.(result);
       if (result.approvalRequired) {
@@ -225,8 +232,17 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
                   <section className="space-y-4 rounded-[1.5rem] border border-white bg-white p-4 shadow-sm">
                     <div className="flex items-center gap-2"><Banknote className="h-4 w-4 text-emerald-600" /><p className="text-xs font-semibold text-slate-800">Payment details</p></div>
                     {!repairingAppointment ? <label className="block text-xs font-medium text-slate-600">Amount received<input required type="number" min="0.01" step="0.01" max={selectedInvoice ? Number(selectedInvoice.balance) : mode === "new" ? form.chargeAmount || undefined : undefined} value={form.amount} onChange={(event) => update("amount", event.target.value)} className={fieldClass} /></label> : null}
-                    {fixedMethod ? <div className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-violet-50 text-xs font-semibold text-violet-700"><Banknote className="h-4 w-4" />Cash · CaseDesk only</div> : <div className="grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1">{PAYMENT_METHODS.map(([value, label]) => <button key={value} type="button" onClick={() => { update("method", value); setError(""); }} className={`h-10 rounded-xl px-1 text-[11px] font-semibold transition ${form.method === value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div>}
-                    <p className={`rounded-2xl px-3.5 py-3 text-xs leading-5 ${form.method === "Cash" ? "bg-violet-50 text-violet-700" : requiresApproval ? "bg-amber-50 text-amber-700" : "bg-sky-50 text-sky-700"}`}>{form.method === "Cash" ? "Cash is recorded in the CaseDesk Cash ledger and never sent to QuickBooks." : requiresApproval ? "Frontdesk entries are submitted to an administrator. QuickBooks is updated only after approval." : "This payment is applied and recorded in QuickBooks immediately when you save."}</p>
+                    {showLedgerPicker ? (
+                      <label className="block text-xs font-medium text-slate-600">Ledger
+                        <select value={form.customLedgerId} onChange={(event) => { const value = event.target.value; setForm((current) => ({ ...current, customLedgerId: value, method: value ? "Cash" : (fixedMethod || "ETransfer") })); setError(""); }} className={fieldClass}>
+                          <option value="">Auto-detect (recommended)</option>
+                          {options.ledgers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                        </select>
+                        <span className="mt-2 block text-[11px] leading-4 text-slate-400">{form.customLedgerId ? "Filing this under a specific ledger keeps it off QuickBooks entirely — recorded in CaseDesk only." : "Left on Auto-detect, CaseDesk matches the ledger from the case type and payment method — no QuickBooks change either way."}</span>
+                      </label>
+                    ) : null}
+                    {fixedMethod || form.customLedgerId ? <div className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-violet-50 text-xs font-semibold text-violet-700"><Banknote className="h-4 w-4" />Cash · CaseDesk only</div> : <div className="grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1">{PAYMENT_METHODS.map(([value, label]) => <button key={value} type="button" onClick={() => { update("method", value); setError(""); }} className={`h-10 rounded-xl px-1 text-[11px] font-semibold transition ${form.method === value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div>}
+                    <p className={`rounded-2xl px-3.5 py-3 text-xs leading-5 ${form.method === "Cash" ? "bg-violet-50 text-violet-700" : requiresApproval ? "bg-amber-50 text-amber-700" : "bg-sky-50 text-sky-700"}`}>{form.customLedgerId ? `Filed under ${selectedLedger?.name || "the selected ledger"} — recorded in CaseDesk only, never sent to QuickBooks.` : form.method === "Cash" ? "Cash is recorded in the CaseDesk Cash ledger and never sent to QuickBooks." : requiresApproval ? "Frontdesk entries are submitted to an administrator. QuickBooks is updated only after approval." : "This payment is applied and recorded in QuickBooks immediately when you save."}</p>
                     <label className="block text-xs font-medium text-slate-600">{form.method === "Cash" ? "Receipt / reference (optional)" : "E-transfer transaction number *"}<input required={form.method !== "Cash"} maxLength={100} value={form.transactionReference} onChange={(event) => update("transactionReference", event.target.value)} className={fieldClass} placeholder={form.method === "Cash" ? "Receipt or internal reference" : "Enter the e-transfer transaction number"} /></label>
                     <label className="block text-xs font-medium text-slate-600">Payment date<input required type="date" max={options?.today || today()} value={form.paymentDate} onChange={(event) => update("paymentDate", event.target.value)} className={fieldClass} /></label>
                     <label className="block text-xs font-medium text-slate-600">Internal note (optional)<textarea rows="3" maxLength={500} value={form.note} onChange={(event) => update("note", event.target.value)} className="mt-1.5 w-full resize-none rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Deposit details or context for staff" /></label>

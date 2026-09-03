@@ -105,7 +105,7 @@ export async function getClientBillingOverview(req, res) {
 
 export async function getClientManualBillingOptions(req, res) {
   const client = await getScopedClient(req);
-  const [categories, cases, invoices, appointments, bookingSettings] = await Promise.all([
+  const [categories, cases, invoices, appointments, bookingSettings, ledgers] = await Promise.all([
     listFeeCategories(req.auth.agencyId),
     prisma.case.findMany({
       where: { agencyId: req.auth.agencyId, clientId: client.id, deletedAt: null },
@@ -146,6 +146,7 @@ export async function getClientManualBillingOptions(req, res) {
       take: 100,
     }),
     prisma.bookingSettings.findUnique({ where: { agencyId: req.auth.agencyId }, select: { consultFeeAmount: true } }),
+    prisma.agencyCustomPaymentLedger.findMany({ where: { agencyId: req.auth.agencyId, isActive: true }, select: { id: true, name: true, color: true, caseTypes: true }, orderBy: { name: "asc" } }),
   ]);
   const visibleAppointments = appointments.filter((item) => {
     if (item.paymentHold?.status === "Refunded") return false;
@@ -163,6 +164,7 @@ export async function getClientManualBillingOptions(req, res) {
         identityMatched: !item.clientId && appointmentContactMatchesClient({ guestEmail, guestEmailNormalized, guestPhone }, client),
       })),
       consultationFee: Number(bookingSettings?.consultFeeAmount || 0),
+      ledgers,
       approvalRequiredForEntries: req.auth.role === "frontdesk",
       cashStoredInCaseDesk: true,
       today: new Date().toISOString().slice(0, 10),
@@ -173,8 +175,21 @@ export async function getClientManualBillingOptions(req, res) {
 export async function createClientManualBillingEntry(req, res) {
   const client = await getScopedClient(req);
   const entryType = String(req.body?.entryType || "");
+
+  // Picking a specific ledger (instead of leaving it on the automatic
+  // case-type/method match) means staff have decided this payment belongs
+  // to exactly one place — so it's forced internal-only here rather than
+  // also letting it post to QuickBooks, which would leave the same payment
+  // sitting in two books of record at once.
+  const requestedLedgerId = req.body?.customLedgerId ? String(req.body.customLedgerId).trim() : null;
+  if (requestedLedgerId) {
+    const ledger = await prisma.agencyCustomPaymentLedger.findFirst({ where: { id: requestedLedgerId, agencyId: req.auth.agencyId, isActive: true }, select: { id: true } });
+    if (!ledger) throw createHttpError(400, "That ledger is unavailable. Choose another, or leave it on Auto-detect.", "LEDGER_NOT_FOUND");
+  }
+  const effectiveMethod = requestedLedgerId ? "Cash" : req.body?.method;
+
   const commonPayment = {
-    method: req.body?.method,
+    method: effectiveMethod,
     transactionReference: req.body?.transactionReference,
     paymentDate: req.body?.paymentDate,
     note: req.body?.note,
@@ -191,7 +206,7 @@ export async function createClientManualBillingEntry(req, res) {
   // against an existing invoice) is untouched: frontdesk still needs
   // administrator review there regardless of method.
   const isAppointmentPayment = ["appointment_payment", "appointment_payment_details"].includes(entryType);
-  if (req.body?.method === "Cash" || (req.auth.role === "frontdesk" && !isAppointmentPayment)) {
+  if (requestedLedgerId || req.body?.method === "Cash" || (req.auth.role === "frontdesk" && !isAppointmentPayment)) {
     const approval = await submitPaymentApproval(req.auth.agencyId, {
       entryType,
       clientId: client.id,
@@ -202,7 +217,7 @@ export async function createClientManualBillingEntry(req, res) {
       description: req.body?.description,
       chargeAmount: req.body?.chargeAmount,
       amount: req.body?.amount,
-      method: req.body?.method,
+      method: effectiveMethod,
       transactionReference: req.body?.transactionReference,
       paymentDate: req.body?.paymentDate,
       note: req.body?.note,
@@ -210,6 +225,7 @@ export async function createClientManualBillingEntry(req, res) {
       overrideFreeConsultation: req.body?.overrideFreeConsultation === true,
       actorUserId: req.auth.userId,
       sourceRole: req.auth.role,
+      customLedgerId: requestedLedgerId || undefined,
     });
     if (req.auth.role !== "frontdesk") {
       const approved = await approvePaymentApproval(req.auth.agencyId, approval.id, req.auth.userId);

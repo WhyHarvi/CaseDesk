@@ -484,7 +484,7 @@ export async function assertManualPaymentReferenceAvailable(agencyId, paymentRef
   }
 }
 
-export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId, actorRole = "admin", approvalId = null, paymentProcessorUserId = actorUserId }) {
+export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId, actorRole = "admin", approvalId = null, paymentProcessorUserId = actorUserId, customLedgerId = undefined }) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   let row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId }, include: { refunds: { where: { status: "Completed" } } } });
   if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
@@ -496,7 +496,12 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     transactionReference,
     paymentDate,
   });
-  const customLedger = await resolveCustomPaymentLedger(agencyId, caseId, method);
+  // customLedgerId is passed in already resolved (a manual override chosen
+  // by staff, or the value a PaymentApproval already settled on at submit
+  // time) whenever the caller knows better than a fresh case-type/method
+  // match — undefined means "nobody's decided yet," so fall back to that
+  // automatic match.
+  const customLedger = customLedgerId !== undefined ? (customLedgerId ? { id: customLedgerId } : null) : await resolveCustomPaymentLedger(agencyId, caseId, method);
   const priorCash = row.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS
     ? await prisma.paymentApproval.aggregate({
       where: { agencyId, caseInvoiceId: row.id, status: "Approved", method: "Cash" },

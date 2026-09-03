@@ -166,11 +166,15 @@ export async function submitPaymentApproval(agencyId, {
   invoiceId, caseId, actorUserId, sourceRole, idempotencyKey,
   clientId = null,
   overrideFreeConsultation = false,
+  customLedgerId = undefined,
 }) {
   const context = await targetContext(agencyId, { entryType, amount, chargeAmount, paymentType, description, appointmentId, caseInvoiceId, invoiceId, caseId, clientId });
   const resolvedEntryType = entryType === "appointment_payment" && context.existingPaid ? "appointment_payment_details" : entryType;
   const validated = validateStaffPayment({ method, amount: context.amount, transactionReference, paymentDate });
-  const customLedger = await resolveCustomPaymentLedger(agencyId, context.caseId, method);
+  // A caller can hand us the ledger already decided (a manual override from
+  // the billing form) instead of leaving it to the automatic case-type/
+  // method match — see recordManualPayment's identical convention.
+  const customLedger = customLedgerId !== undefined ? (customLedgerId ? { id: customLedgerId } : null) : await resolveCustomPaymentLedger(agencyId, context.caseId, method);
   const key = normalizePaymentApprovalKey(idempotencyKey)
     || normalizePaymentApprovalKey(`${entryType}:${appointmentId || caseInvoiceId || invoiceId || caseId}:${method}:${validated.reference || validated.paymentDate.toISOString().slice(0, 10)}`);
   const row = await prisma.paymentApproval.upsert({
@@ -273,6 +277,7 @@ async function processApprovedPayment(row, actorUserId) {
       actorUserId,
       paymentProcessorUserId: row.submittedById,
       approvalId: row.id,
+      customLedgerId: row.customLedgerId,
     });
     return { qbPaymentId: invoice.lastQbPaymentId || null, result: { caseInvoiceId: invoice.id } };
   }
@@ -311,6 +316,7 @@ async function processApprovedPayment(row, actorUserId) {
       actorUserId,
       paymentProcessorUserId: row.submittedById,
       approvalId: row.id,
+      customLedgerId: row.customLedgerId,
     });
     return { qbPaymentId: updated.lastQbPaymentId || null, caseInvoiceId: invoice.id, result: { caseInvoiceId: invoice.id } };
   }
