@@ -16,11 +16,9 @@ function wordCount(value) {
   return String(value || "").trim().split(/\s+/).filter(Boolean).length;
 }
 
-export function shouldAutoMarkAttendedFromNote({ appointment, role, userId, now = new Date() }) {
+export function shouldAutoMarkAttendedFromNote({ appointment, now = new Date() }) {
   const startsAt = new Date(appointment?.startsAt);
-  return role === "consultant"
-    && appointment?.status === "Scheduled"
-    && appointment?.assignedToId === userId
+  return appointment?.status === "Scheduled"
     && !Number.isNaN(startsAt.getTime())
     && startsAt <= now;
 }
@@ -74,8 +72,6 @@ export async function updateAppointmentProfileContext(req, res) {
   let attendanceAutoMarkFailed = false;
   if (savedNewInternalNote && shouldAutoMarkAttendedFromNote({
     appointment: existing,
-    role: req.auth.role,
-    userId: req.auth.userId,
   })) {
     try {
       attendanceAutoMarked = Boolean(await applyAppointmentStatusChange({
@@ -84,7 +80,7 @@ export async function updateAppointmentProfileContext(req, res) {
         status: "Completed",
         actorUserId: req.auth.userId,
         expectedStatus: "Scheduled",
-        attendanceSource: "Consultant saved appointment notes",
+        attendanceSource: "Assigned staff saved appointment notes",
       }));
     } catch {
       attendanceAutoMarkFailed = true;
@@ -133,8 +129,6 @@ export async function createAppointmentNote(req, res) {
   let attendanceAutoMarkFailed = false;
   if (shouldAutoMarkAttendedFromNote({
     appointment,
-    role: req.auth.role,
-    userId: req.auth.userId,
   })) {
     try {
       const completed = await applyAppointmentStatusChange({
@@ -143,7 +137,7 @@ export async function createAppointmentNote(req, res) {
         status: "Completed",
         actorUserId: req.auth.userId,
         expectedStatus: "Scheduled",
-        attendanceSource: "Consultant saved client notes",
+        attendanceSource: "Assigned staff saved client notes",
       });
       attendanceAutoMarked = Boolean(completed);
     } catch {
@@ -231,13 +225,13 @@ export async function confirmAppointmentAdviceController(req, res) {
   const data = await confirmAppointmentAdvice(req, req.params.id, req.body || {});
   let attendanceAutoMarked = false;
   let attendanceAutoMarkError = null;
-  if (req.auth.role === "consultant") {
+  if (["admin", "consultant"].includes(req.auth.role)) {
     try {
       attendanceAutoMarked = await autoMarkAppointmentAttended({
         agencyId: req.auth.agencyId,
         appointmentId: req.params.id,
         actorUserId: req.auth.userId,
-        source: "Consultant completed advice and handoff",
+        source: "Assigned staff completed advice and handoff",
       });
     } catch (error) {
       attendanceAutoMarkError = "The advice was saved, but attendance could not be updated. Please mark the appointment attended manually.";

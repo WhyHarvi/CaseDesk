@@ -33,6 +33,8 @@ Manages the shared calendar, appointment profiles, session types, public booking
 ## Business Rules
 Availability combines agency/session/staff settings, blocks, existing appointments, buffers, notice, holds, and timezone. Public actions use tokens/codes. Meeting and calendar sync are asynchronous and retryable; no-show and reminder workers update outcomes.
 
+When any staff member with permission saves appointment notes after a scheduled appointment has started, the appointment is automatically marked attended. Confirmed post-consultation advice provides the same signal for its permitted staff. Terminal and future appointments are never changed by these signals.
+
 ## Permissions
 Staff calendar is workspace-visible, while mutations remain role and case scoped. Public booking resolves agency/session through tokens and rate limits.
 

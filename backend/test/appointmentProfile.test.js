@@ -86,7 +86,7 @@ test("appointment notes show the client query before an explicit note composer",
   assert.match(notesPanel, /Save note/);
 });
 
-test("a saved note auto-marks an assigned consultant's started appointment attended without touching future or terminal appointments", async () => {
+test("a saved note by any permitted staff member auto-marks a started appointment attended without touching future or terminal appointments", async () => {
   const started = {
     id: "appointment-1",
     status: "Scheduled",
@@ -99,8 +99,9 @@ test("a saved note auto-marks an assigned consultant's started appointment atten
   assert.equal(shouldAutoMarkAttendedFromNote({ ...input, now: new Date("2026-08-27T13:59:00.000Z") }), false);
   assert.equal(shouldAutoMarkAttendedFromNote({ ...input, appointment: { ...started, status: "Cancelled" } }), false);
   assert.equal(shouldAutoMarkAttendedFromNote({ ...input, appointment: { ...started, status: "NoShow" } }), false);
-  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, userId: "consultant-2" }), false);
-  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, role: "admin" }), false);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, userId: "consultant-2" }), true);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, role: "admin" }), true);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, role: "frontdesk" }), true);
 
   const [controller, bookingController, api, overlay] = await Promise.all([
     source("../src/controllers/appointmentProfileController.js"),
@@ -130,7 +131,8 @@ test("reliable consultation activity shares one guarded attendance pipeline", as
   assert.match(attendance, /expectedStatus: "Scheduled"/);
   assert.match(attendance, /MINIMUM_ATTENDED_CALL_SECONDS = 30/);
   assert.match(attendance, /if \(candidates\.length !== 1\) return false/);
-  assert.match(profileController, /Consultant completed advice and handoff/);
+  assert.match(profileController, /Assigned staff completed advice and handoff/);
+  assert.match(profileController, /\["admin", "consultant"\]\.includes\(req\.auth\.role\)/);
   assert.match(profileController, /Client checked in at the front desk/);
   assert.match(routes, /router\.post\("\/:id\/check-in", requireRole\("admin", "frontdesk"\)/);
   assert.match(api, /export async function checkInAppointmentClient/);
