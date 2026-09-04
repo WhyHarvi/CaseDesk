@@ -279,6 +279,7 @@ input {
 .nova-pet[data-activity="yarn"],
 .nova-pet[data-activity="stretch"],
 .nova-pet[data-activity="nap"],
+.nova-pet[data-activity="sleep"],
 .nova-pet[data-activity="nod"],
 .nova-pet[data-activity="dance"],
 .nova-pet[data-activity="wave"],
@@ -325,6 +326,27 @@ input {
   transform-box: fill-box;
   transform-origin: center bottom;
   animation: nova-pet-breathe 1.8s ease-in-out infinite alternate;
+}
+
+.nova-pet[data-activity="sleep"] .nova-pet-sleeping {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: nova-pet-sleep-breathe 2.8s ease-in-out infinite alternate;
+}
+
+.nova-pet-snore {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: nova-pet-snore 3.2s ease-out infinite;
+}
+
+.nova-pet-snore-two {
+  animation-delay: 0.55s;
+}
+
+.nova-pet-snore-three {
+  animation-delay: 1.1s;
 }
 
 .nova-pet-dream {
@@ -428,6 +450,17 @@ input {
 @keyframes nova-pet-breathe {
   from { transform: scaleY(0.98); }
   to { transform: scaleY(1.025); }
+}
+
+@keyframes nova-pet-sleep-breathe {
+  from { transform: translateY(1px) scaleX(1) scaleY(0.985); }
+  to { transform: translateY(0) scaleX(1.012) scaleY(1.018); }
+}
+
+@keyframes nova-pet-snore {
+  0%, 12% { opacity: 0; transform: translate(-2px, 3px) scale(0.82); }
+  24%, 54% { opacity: 0.82; }
+  72%, 100% { opacity: 0; transform: translate(3px, -4px) scale(1.08); }
 }
 
 @keyframes nova-pet-dream {

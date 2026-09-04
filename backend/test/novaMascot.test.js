@@ -38,12 +38,13 @@ test("the playful Nova cat opens the existing Nova conversation without blocking
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test("Nova's movement pause persists on the user account and synchronizes across tabs and devices", async () => {
-  const [schema, controller, routes, mascot] = await Promise.all([
+test("Nova's movement pause persists on the user account, sleeps in place, and synchronizes across tabs and devices", async () => {
+  const [schema, controller, routes, mascot, styles] = await Promise.all([
     source("../prisma/schema.prisma"),
     source("../src/controllers/aiController.js"),
     source("../src/routes/aiRoutes.js"),
     source("../../frontend/src/components/chat/NovaCatMascot.jsx"),
+    source("../../frontend/src/index.css"),
   ]);
 
   assert.match(schema, /novaMovementPaused\s+Boolean\s+@default\(false\) @map\("nova_movement_paused"\)/);
@@ -61,6 +62,16 @@ test("Nova's movement pause persists on the user account and synchronizes across
   assert.match(mascot, /const bounds = petRef\.current\.getBoundingClientRect\(\);/);
   assert.match(mascot, /const frozen = clampPosition\(\{ x: bounds\.left, y: bounds\.top \}\);/);
   assert.match(mascot, /if \(!config \|\| reduceMotion \|\| paused\) return;/);
+  assert.match(mascot, /const displayedActivity = paused \? "sleep" : activity;/);
+  assert.match(mascot, /activity === "sleep"/);
+  assert.match(mascot, /className="nova-pet-snores"/);
+  assert.match(mascot, /className="nova-pet-sleep-paws"/);
+  assert.match(mascot, /className="nova-pet-sleeping"/);
+  assert.match(mascot, /nova-pet-snore-one/);
+  assert.match(mascot, /fill="#E8A9BA"/);
+  assert.match(styles, /\.nova-pet\[data-activity="sleep"\] \.nova-pet-sleeping \{[\s\S]*animation: nova-pet-sleep-breathe/);
+  assert.match(styles, /\.nova-pet-snore-two \{\s*animation-delay: 0\.55s;/);
+  assert.match(styles, /@keyframes nova-pet-snore/);
 });
 
 test("the cat is only ever mounted in the staff app, never the client portal", async () => {

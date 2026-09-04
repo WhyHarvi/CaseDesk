@@ -121,36 +121,83 @@ export function NovaCatArt({ activity }) {
         </radialGradient>
       </defs>
 
-      <ellipse className="nova-pet-shadow" cx="66" cy="98" rx="43" ry="7" fill="#0F172A" opacity="0.12" />
-      <g className="nova-pet-body">
-        <path className="nova-pet-tail" d="M94 72C121 76 127 48 112 39C102 33 96 42 104 48C111 53 111 61 103 64" stroke="url(#nova-pet-coat)" strokeWidth="11" strokeLinecap="round" />
-        <ellipse cx="72" cy="73" rx="34" ry="24" fill="url(#nova-pet-coat)" />
-        <path d="M56 67C55 79 58 91 65 97C72 91 76 78 73 65" fill="url(#nova-pet-cream)" opacity="0.94" />
-        <path className="nova-pet-leg nova-pet-leg-back" d="M85 77C91 81 93 91 89 98H76L77 79" fill="#33455D" />
-        <path className="nova-pet-leg nova-pet-leg-front" d="M48 73C43 80 42 91 46 98H60L60 75" fill="#40546D" />
-        <ellipse cx="48" cy="98" rx="9" ry="3.5" fill="#D4E1EE" />
-        <ellipse cx="87" cy="98" rx="9" ry="3.5" fill="#D4E1EE" />
+      {activity === "sleep" ? (
+        <>
+          <ellipse className="nova-pet-shadow" cx="66" cy="98" rx="49" ry="6" fill="#0F172A" opacity="0.11" />
+          <g className="nova-pet-sleeping">
+            <path className="nova-pet-sleep-tail" d="M95 73C120 74 124 89 110 97C99 103 85 98 81 90" stroke="url(#nova-pet-coat)" strokeWidth="11" strokeLinecap="round" />
+            <ellipse cx="76" cy="74" rx="38" ry="25" fill="url(#nova-pet-coat)" transform="rotate(-3 76 74)" />
+            <path d="M56 82C69 90 89 91 102 81C94 95 69 99 55 88Z" fill="url(#nova-pet-cream)" opacity="0.36" />
 
-        <g className="nova-pet-head">
-          <path d="M30 43L31 14L49 31" fill="#43566F" />
-          <path d="M70 42L68 14L52 31" fill="#43566F" />
-          <path d="M34 31L35 20L43 30" fill="#E5A9B9" opacity="0.8" />
-          <path d="M65 31L64 20L57 30" fill="#E5A9B9" opacity="0.8" />
-          <ellipse cx="50" cy="48" rx="25" ry="22" fill="url(#nova-pet-coat)" />
-          <path d="M36 43C40 40 44 40 47 43M54 43C58 40 62 40 65 43" stroke="#DCE8F4" strokeWidth="2.5" strokeLinecap="round" />
-          <ellipse cx="41" cy="46" rx="3" ry="3.8" fill="#A9DAFF" />
-          <ellipse cx="60" cy="46" rx="3" ry="3.8" fill="#A9DAFF" />
-          <circle cx="41" cy="46" r="1.25" fill="#111827" />
-          <circle cx="60" cy="46" r="1.25" fill="#111827" />
-          <circle cx="40" cy="44.5" r="0.7" fill="white" />
-          <circle cx="59" cy="44.5" r="0.7" fill="white" />
-          <path d="M47 53L50.5 56L54 53L50.5 51.4L47 53Z" fill="#F0A9BB" />
-          <path d="M50.5 56C49 59 46 59.5 44 58M50.5 56C52 59 55 59.5 57 58" stroke="#DFEBF5" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M43 54L18 50M43 58L17 60M58 54L82 50M58 58L83 60" stroke="#C5D7E8" strokeWidth="1.5" strokeLinecap="round" opacity="0.9" />
-          <path d="M32 65C42 70 58 70 69 64" stroke="#78A9DE" strokeWidth="4" strokeLinecap="round" />
-          <path d="M51 66L54 71L60 72L56 76L57 82L51 79L46 82L47 76L43 72L49 71L51 66Z" fill="#E8F3FC" stroke="#6489B5" strokeWidth="1.2" />
-        </g>
-      </g>
+            <g className="nova-pet-sleep-head">
+              <path d="M20 64L24 43L38 58" fill="#43566F" />
+              <path d="M51 58L58 41L65 65" fill="#43566F" />
+              <path d="M24 57L27 48L34 58" fill="#E5A9B9" opacity="0.78" />
+              <path d="M54 57L58 47L62 61" fill="#E5A9B9" opacity="0.78" />
+              <ellipse cx="41" cy="72" rx="24" ry="20" fill="url(#nova-pet-coat)" transform="rotate(5 41 72)" />
+              <path d="M27 69C31 73 36 73 40 69M45 70C49 74 54 74 58 70" stroke="#DCE8F4" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M38 77L41.5 80L45 77L41.5 75.5L38 77Z" fill="#F0A9BB" />
+              <path d="M41.5 80C40 82 38 83 36 82M41.5 80C43 83 46 83 48 82" stroke="#DFEBF5" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M33 77L12 74M33 81L13 85M49 77L66 73M49 81L65 85" stroke="#C5D7E8" strokeWidth="1.35" strokeLinecap="round" opacity="0.84" />
+            </g>
+
+            <g className="nova-pet-sleep-paws">
+              <g transform="translate(61 90) rotate(-7)">
+                <ellipse rx="8.5" ry="6.2" fill="#D4E1EE" stroke="#40546D" strokeWidth="1" />
+                <ellipse cy="1.5" rx="3.2" ry="2.5" fill="#E8A9BA" opacity="0.88" />
+                <circle cx="-3.8" cy="-2" r="1.25" fill="#E8A9BA" />
+                <circle cy="-3" r="1.25" fill="#E8A9BA" />
+                <circle cx="3.8" cy="-2" r="1.25" fill="#E8A9BA" />
+              </g>
+              <g transform="translate(77 92) rotate(7)">
+                <ellipse rx="8.5" ry="6.2" fill="#C5D7E8" stroke="#33455D" strokeWidth="1" />
+                <ellipse cy="1.5" rx="3.2" ry="2.5" fill="#E8A9BA" opacity="0.88" />
+                <circle cx="-3.8" cy="-2" r="1.25" fill="#E8A9BA" />
+                <circle cy="-3" r="1.25" fill="#E8A9BA" />
+                <circle cx="3.8" cy="-2" r="1.25" fill="#E8A9BA" />
+              </g>
+            </g>
+          </g>
+          <g className="nova-pet-snores" fill="none" stroke="#527CAF" strokeLinecap="round" strokeLinejoin="round">
+            <path className="nova-pet-snore nova-pet-snore-one" d="M71 37H80L72 46H82" strokeWidth="2.5" />
+            <path className="nova-pet-snore nova-pet-snore-two" d="M88 21H96L89 29H98" strokeWidth="2" />
+            <path className="nova-pet-snore nova-pet-snore-three" d="M104 9H110L105 15H112" strokeWidth="1.6" />
+          </g>
+        </>
+      ) : (
+        <>
+          <ellipse className="nova-pet-shadow" cx="66" cy="98" rx="43" ry="7" fill="#0F172A" opacity="0.12" />
+          <g className="nova-pet-body">
+            <path className="nova-pet-tail" d="M94 72C121 76 127 48 112 39C102 33 96 42 104 48C111 53 111 61 103 64" stroke="url(#nova-pet-coat)" strokeWidth="11" strokeLinecap="round" />
+            <ellipse cx="72" cy="73" rx="34" ry="24" fill="url(#nova-pet-coat)" />
+            <path d="M56 67C55 79 58 91 65 97C72 91 76 78 73 65" fill="url(#nova-pet-cream)" opacity="0.94" />
+            <path className="nova-pet-leg nova-pet-leg-back" d="M85 77C91 81 93 91 89 98H76L77 79" fill="#33455D" />
+            <path className="nova-pet-leg nova-pet-leg-front" d="M48 73C43 80 42 91 46 98H60L60 75" fill="#40546D" />
+            <ellipse cx="48" cy="98" rx="9" ry="3.5" fill="#D4E1EE" />
+            <ellipse cx="87" cy="98" rx="9" ry="3.5" fill="#D4E1EE" />
+
+            <g className="nova-pet-head">
+              <path d="M30 43L31 14L49 31" fill="#43566F" />
+              <path d="M70 42L68 14L52 31" fill="#43566F" />
+              <path d="M34 31L35 20L43 30" fill="#E5A9B9" opacity="0.8" />
+              <path d="M65 31L64 20L57 30" fill="#E5A9B9" opacity="0.8" />
+              <ellipse cx="50" cy="48" rx="25" ry="22" fill="url(#nova-pet-coat)" />
+              <path d="M36 43C40 40 44 40 47 43M54 43C58 40 62 40 65 43" stroke="#DCE8F4" strokeWidth="2.5" strokeLinecap="round" />
+              <ellipse cx="41" cy="46" rx="3" ry="3.8" fill="#A9DAFF" />
+              <ellipse cx="60" cy="46" rx="3" ry="3.8" fill="#A9DAFF" />
+              <circle cx="41" cy="46" r="1.25" fill="#111827" />
+              <circle cx="60" cy="46" r="1.25" fill="#111827" />
+              <circle cx="40" cy="44.5" r="0.7" fill="white" />
+              <circle cx="59" cy="44.5" r="0.7" fill="white" />
+              <path d="M47 53L50.5 56L54 53L50.5 51.4L47 53Z" fill="#F0A9BB" />
+              <path d="M50.5 56C49 59 46 59.5 44 58M50.5 56C52 59 55 59.5 57 58" stroke="#DFEBF5" strokeWidth="1.8" strokeLinecap="round" />
+              <path d="M43 54L18 50M43 58L17 60M58 54L82 50M58 58L83 60" stroke="#C5D7E8" strokeWidth="1.5" strokeLinecap="round" opacity="0.9" />
+              <path d="M32 65C42 70 58 70 69 64" stroke="#78A9DE" strokeWidth="4" strokeLinecap="round" />
+              <path d="M51 66L54 71L60 72L56 76L57 82L51 79L46 82L47 76L43 72L49 71L51 66Z" fill="#E8F3FC" stroke="#6489B5" strokeWidth="1.2" />
+            </g>
+          </g>
+        </>
+      )}
 
       {activity === "yarn" ? (
         <g className="nova-pet-yarn">
@@ -508,17 +555,21 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
     wave: greeting(firstName),
     headstand: "Whoa, upside down!",
     coin: "Ka-ching!",
+    sleep: "Nova is sleeping…",
   }[activity];
+
+  const displayedActivity = paused ? "sleep" : activity;
+  const displayedActivityLabel = paused ? "Nova is sleeping…" : activityLabel;
 
   return (
     <div
       ref={petRef}
-      className={`nova-pet fixed left-0 top-0 z-0 pointer-events-none ${dragging ? "is-dragging" : ""} is-${activity}`}
+      className={`nova-pet fixed left-0 top-0 z-0 pointer-events-none ${dragging ? "is-dragging" : ""} is-${displayedActivity}`}
       style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0)` }}
-      data-activity={activity}
+      data-activity={displayedActivity}
     >
       <div className="nova-pet-bubble pointer-events-none absolute bottom-[94px] left-1/2 w-max max-w-[210px] -translate-x-1/2 text-center rounded-2xl border border-brand-100 bg-white/95 px-3 py-1.5 text-xs font-semibold text-brand-800 opacity-0 shadow-lg transition-opacity">
-        {activityLabel}
+        {displayedActivityLabel}
       </div>
       <div className="group relative pointer-events-auto">
         <button
@@ -533,7 +584,7 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
           className="nova-pet-button relative flex h-[104px] w-28 cursor-grab touch-none items-end justify-center rounded-[2rem] outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 active:cursor-grabbing"
         >
           <span className={`block transition-transform ${direction === "left" ? "-scale-x-100" : "scale-x-100"}`}>
-            <NovaCatArt activity={activity} />
+            <NovaCatArt activity={displayedActivity} />
           </span>
         </button>
         <button
