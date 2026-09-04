@@ -805,7 +805,7 @@ export default function CommunicationWorkspace({ caseItem }) {
         api.get("/communications/providers"),
         api.get("/communications/templates"),
         api.get(`/communications/case/${caseItem.id}/consents`),
-        api.get("/users?limit=100"),
+        api.get("/leads/staff"),
       ]);
       setProviders(providerResponse.data.data || {});
       setPermissions(providerResponse.data.meta?.permissions || {});

@@ -310,7 +310,7 @@ export default function ConversationOverlay({
       setError("");
       const [detail, team] = await Promise.all([
         api.get(`/communications/conversations/${conversationId}?limit=100`),
-        api.get("/users?limit=100"),
+        api.get("/leads/staff"),
       ]);
       setConversation(detail.data.data);
       setUsers(team.data.data || []);
