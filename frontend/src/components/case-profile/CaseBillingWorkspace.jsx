@@ -375,7 +375,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
           )}
         </div>
       ) : null}
-      {role === "admin" && invoice.accountingProvider === "QuickBooks" && invoice.status === "Paid" ? (
+      {role === "admin" && invoice.accountingProvider === "QuickBooks" && ["Paid", "PartiallyPaid"].includes(invoice.status) ? (
         <div className="mt-3 border-t border-slate-100 pt-3">
           {!voidPaymentOpen ? (
             <button type="button" onClick={() => setVoidPaymentOpen(true)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 hover:underline"><Trash2 className="h-3.5 w-3.5" /> Void payment (mistaken entry)</button>

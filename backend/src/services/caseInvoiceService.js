@@ -726,6 +726,8 @@ export async function voidPaidCaseInvoicePayment(agencyId, { caseId, invoiceId, 
     throw createHttpError(409, "No QuickBooks payment is linked to this invoice.", "QBO_PAYMENT_MISSING");
   }
 
+  const collected = Math.max(0, Number(invoice.amount) - Number(invoice.balance));
+
   await deleteQuickBooksPayment(agencyId, { id: invoice.lastQbPaymentId });
   // Voiding the payment changes the invoice's own SyncToken in QuickBooks —
   // the value CaseDesk stored at creation/last-sync time is now stale, so
@@ -735,9 +737,32 @@ export async function voidPaidCaseInvoicePayment(agencyId, { caseId, invoiceId, 
     await voidQuickBooksInvoice(agencyId, { id: freshInvoice.id, syncToken: freshInvoice.syncToken });
   }
 
-  const updated = await prisma.caseInvoice.update({
-    where: { id: invoice.id },
-    data: { status: "Void", balance: 0, lastSyncedAt: new Date() },
+  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.caseInvoice.update({
+      where: { id: invoice.id },
+      data: { status: "Void", balance: 0, lastSyncedAt: new Date() },
+    });
+    // The QuickBooks payment just deleted above may have already been
+    // credited toward incentives and the revenue contest (creditCaseInvoiceCollection
+    // runs on every genuine collection, this one included) — this isn't a
+    // refund, but from the incentive ledger's perspective the underlying
+    // payment no longer exists, so anything credited against it has to be
+    // reversed the same way a refund would. Rebaseline the cursor to the
+    // new (zero) balance in the same transaction so nothing later mistakes
+    // this void for a fresh collection.
+    if (collected > 0.01) {
+      await reverseCaseInvoiceRefund(tx, {
+        agencyId, caseId, caseInvoiceId: invoice.id, refundAmount: collected,
+        trigger: "PAYMENT_VOIDED", triggerRef: `void-payment:${invoice.id}`,
+      });
+      await recordRevenueMovement(agencyId, {
+        caseId, caseInvoiceId: invoice.id, delta: -collected,
+        triggerSource: "PAYMENT_VOIDED", triggerRef: `void-payment:${invoice.id}`,
+      }, tx);
+      await tx.caseInvoiceCreditCursor.updateMany({ where: { caseInvoiceId: invoice.id, agencyId }, data: { lastCreditedBalance: 0 } });
+    }
+    return row;
   });
   await recordActivity({
     agencyId,

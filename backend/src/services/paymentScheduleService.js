@@ -10,7 +10,7 @@ import { logger } from "./logger.js";
 import { templateMatchesCase } from "./correspondenceTemplateService.js";
 import { ensureDefaultBillingTemplates } from "./billingTemplateDefaults.js";
 import { applyLocalCashToInvoice } from "./paymentApprovalLedgerService.js";
-import { resetCreditCursor } from "./incentiveCreditingService.js";
+import { resetCreditCursor, reverseCaseInvoiceRefund } from "./incentiveCreditingService.js";
 
 const TRIGGER_TYPES = new Set(["Date", "Stage"]);
 
@@ -822,6 +822,8 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
   const claimed = await claimInstallmentForVoid(installment.id);
   if (!claimed) throw createHttpError(409, "This installment changed — reload and try again.", "CONFLICT");
 
+  const collected = Math.max(0, Number(invoice.amount) - Number(invoice.balance));
+
   try {
     if (hasPayment) {
       await deleteQuickBooksPayment(agencyId, { id: invoice.lastQbPaymentId });
@@ -831,13 +833,17 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
       await voidQuickBooksInvoice(agencyId, { id: invoice.qbInvoiceId, syncToken: invoice.qbSyncToken });
     }
 
-    await prisma.$transaction([
+    const { recordRevenueMovement } = hasPayment && collected > 0.01
+      ? await import("./incentiveExpansionService.js")
+      : { recordRevenueMovement: null };
+
+    await prisma.$transaction(async (tx) => {
       // balance: 0 alongside status: "Void" — a voided invoice isn't owed
       // by anyone anymore. Leaving the old balance in place is what made
       // the client portal keep showing a live "Pay now" link for an
       // invoice that no longer exists in QuickBooks.
-      prisma.caseInvoice.update({ where: { id: invoice.id }, data: { status: "Void", balance: 0 } }),
-      prisma.casePaymentInstallment.update({
+      await tx.caseInvoice.update({ where: { id: invoice.id }, data: { status: "Void", balance: 0 } });
+      await tx.casePaymentInstallment.update({
         where: { id: installment.id },
         data: {
           status: "Scheduled",
@@ -846,8 +852,25 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
           lastInvoiceError: null,
           lastInvoiceAttemptedAt: null,
         },
-      }),
-    ]);
+      });
+      // The QuickBooks payment just deleted above may have already been
+      // credited toward incentives and the revenue contest — this isn't a
+      // refund, but from the incentive ledger's perspective the underlying
+      // payment no longer exists, so anything credited against it has to
+      // be reversed the same way a refund would (see voidPaidCaseInvoicePayment
+      // for the identical logic on a standalone, non-schedule invoice).
+      if (recordRevenueMovement) {
+        await reverseCaseInvoiceRefund(tx, {
+          agencyId, caseId, caseInvoiceId: invoice.id, refundAmount: collected,
+          trigger: "PAYMENT_VOIDED", triggerRef: `void-payment:${invoice.id}`,
+        });
+        await recordRevenueMovement(agencyId, {
+          caseId, caseInvoiceId: invoice.id, delta: -collected,
+          triggerSource: "PAYMENT_VOIDED", triggerRef: `void-payment:${invoice.id}`,
+        }, tx);
+        await tx.caseInvoiceCreditCursor.updateMany({ where: { caseInvoiceId: invoice.id, agencyId }, data: { lastCreditedBalance: 0 } });
+      }
+    });
 
     await recordActivity({
       agencyId,
@@ -860,13 +883,15 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
       entityId: installment.id,
     });
 
-    // The guard above only allows voiding an untouched invoice
-    // (balance === amount) — nothing was ever collected on it, so this
-    // balance-to-0 change must re-baseline the credit cursor, not be
-    // treated as a collection event (see resetCreditCursor's docs).
-    await resetCreditCursor(agencyId, invoice.id, 0).catch((resetError) => {
-      logger.warn("incentive.cursor_reset_failed", { agencyId, caseInvoiceId: invoice.id, reason: resetError.message });
-    });
+    if (!hasPayment) {
+      // Nothing was ever collected on this invoice (balance === amount),
+      // so this balance-to-0 change must re-baseline the credit cursor,
+      // not be treated as a collection event (see resetCreditCursor's
+      // docs). The hasPayment case already rebaselined it atomically above.
+      await resetCreditCursor(agencyId, invoice.id, 0).catch((resetError) => {
+        logger.warn("incentive.cursor_reset_failed", { agencyId, caseInvoiceId: invoice.id, reason: resetError.message });
+      });
+    }
   } catch (error) {
     // Release the claim so the row doesn't get stuck on "Voiding" if the
     // QuickBooks call or the follow-up transaction failed.

@@ -39,6 +39,8 @@ Requires financial capability and Payments page or Billing case tab. Sensitive a
 ## Side Effects
 Creates/voids provider transactions, changes balances, generates PDFs, sends payment notices, and credits/recalculates incentives. Completed collections in explicitly eligible fee categories also append revenue-contest credits; partial/full refunds append capped proportional reversals against the original owner and incentive period. College, government, and disbursement categories are excluded by default.
 
+Voiding a mistaken payment (`voidPaidCaseInvoicePayment`, and its payment-schedule-installment counterpart `voidInvoicedInstallment`) is deliberately not a refund — it deletes the QuickBooks Receive Payment and voids the invoice with no money moving — but the payment may have already run through `creditCaseInvoiceCollection` like any other genuine collection. Both call sites reverse whatever that already posted (incentive ledger credit and revenue-contest credit) in the same transaction as the invoice-status flip, via `incentiveCreditingService.reverseCaseInvoiceRefund`, and rebaseline the credit cursor to 0 there too. See [[Incentive Expansion Requirements]].
+
 ## Change Risk
 Critical: errors affect money, auditability, external accounting, and case closure.
 

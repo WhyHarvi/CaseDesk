@@ -49,6 +49,44 @@ test("a mistakenly-recorded payment can be reversed without a refund — deleted
   assert.match(billingWorkspace, /invoicedInstallment/);
 });
 
+test("voiding a mistaken payment reverses whatever it already credited toward incentives and the revenue contest", async () => {
+  const [invoiceService, scheduleService, billingWorkspace] = await Promise.all([
+    source("../src/services/caseInvoiceService.js"),
+    source("../src/services/paymentScheduleService.js"),
+    source("../../frontend/src/components/case-profile/CaseBillingWorkspace.jsx"),
+  ]);
+
+  // Real gap found live: a wrong invoice had already been through
+  // creditCaseInvoiceCollection (a normal payment, indistinguishable from
+  // any other), so it posted real incentive-ledger credits and a
+  // revenue-contest credit before anyone noticed the invoice was wrong.
+  // Deleting the QuickBooks payment and voiding the invoice — this is not
+  // a refund, so requestCaseInvoiceRefund's reversal never runs — must not
+  // leave that credit standing on money that's just been erased.
+  const standaloneStart = invoiceService.indexOf("export async function voidPaidCaseInvoicePayment(");
+  const standaloneBody = invoiceService.slice(standaloneStart, invoiceService.indexOf("\nexport async function", standaloneStart + 10));
+  assert.match(standaloneBody, /const collected = Math\.max\(0, Number\(invoice\.amount\) - Number\(invoice\.balance\)\);/);
+  assert.match(standaloneBody, /const \{ recordRevenueMovement \} = await import\("\.\/incentiveExpansionService\.js"\);/);
+  assert.match(standaloneBody, /const updated = await prisma\.\$transaction\(async \(tx\) => \{/);
+  assert.match(standaloneBody, /if \(collected > 0\.01\) \{[\s\S]*?reverseCaseInvoiceRefund\(tx, \{[\s\S]*?trigger: "PAYMENT_VOIDED", triggerRef: `void-payment:\$\{invoice\.id\}`,[\s\S]*?recordRevenueMovement\(agencyId, \{[\s\S]*?delta: -collected,[\s\S]*?triggerSource: "PAYMENT_VOIDED"[\s\S]*?\}, tx\);[\s\S]*?tx\.caseInvoiceCreditCursor\.updateMany\(\{ where: \{ caseInvoiceId: invoice\.id, agencyId \}, data: \{ lastCreditedBalance: 0 \} \}\);/);
+
+  // Same gap, same fix, on the payment-schedule installment's own copy of
+  // this operation.
+  assert.match(scheduleService, /import \{ resetCreditCursor, reverseCaseInvoiceRefund \} from "\.\/incentiveCreditingService\.js";/);
+  const installmentStart = scheduleService.indexOf("export async function voidInvoicedInstallment(");
+  const installmentBody = scheduleService.slice(installmentStart, scheduleService.indexOf("\nexport async function", installmentStart + 10));
+  assert.match(installmentBody, /const collected = Math\.max\(0, Number\(invoice\.amount\) - Number\(invoice\.balance\)\);/);
+  assert.match(installmentBody, /reverseCaseInvoiceRefund\(tx, \{/);
+  assert.match(installmentBody, /triggerSource: "PAYMENT_VOIDED"/);
+
+  // The "Void payment (mistaken entry)" button used to only appear once an
+  // invoice reached full "Paid" status — a partially-paid invoice (like the
+  // one that surfaced this gap) had no supported way to reach this action
+  // through the UI at all, even though the backend never actually required
+  // full payment.
+  assert.match(billingWorkspace, /invoice\.accountingProvider === "QuickBooks" && \["Paid", "PartiallyPaid"\]\.includes\(invoice\.status\)/);
+});
+
 test("a voided payment's old reference doesn't permanently lock out its own real transaction number", async () => {
   const [invoiceService, holdService] = await Promise.all([
     source("../src/services/caseInvoiceService.js"),
