@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Briefcase, DollarSign, FileCheck, Pause, Play, TrendingUp, UserRound } from "lucide-react";
 import { useReducedMotion } from "framer-motion";
+import { useAuth } from "../../auth/AuthContext";
 import api from "../../services/api";
 import { onNovaCelebrate } from "../../utils/novaCelebrate";
 
 const STORAGE_KEY = "casedesk:nova-pet-position";
+const PAUSE_STORAGE_PREFIX = "casedesk:nova-movement-paused:";
+const PAUSE_CHANNEL_PREFIX = "casedesk:nova-movement:";
+const PAUSE_SYNC_INTERVAL_MS = 5_000;
 const PET_WIDTH = 112;
 const PET_HEIGHT = 104;
 const EDGE_GAP = 16;
@@ -83,6 +87,11 @@ function savedPosition() {
     // A corrupt preference should never keep the assistant from appearing.
   }
   return homePosition();
+}
+
+function savedPausePreference(userId) {
+  if (typeof window === "undefined" || !userId) return false;
+  try { return window.localStorage.getItem(`${PAUSE_STORAGE_PREFIX}${userId}`) === "true"; } catch { return false; }
 }
 
 // Exported so NovaChatPresentation.jsx's in-chat companion can render the
@@ -178,18 +187,21 @@ export function NovaCatArt({ activity }) {
 }
 
 export default function NovaCatMascot({ onActivate, firstName = "", currentPath = "" }) {
+  const { appUser } = useAuth();
+  const userId = appUser?.id || "";
   const reduceMotion = useReducedMotion();
   const [position, setPosition] = useState(savedPosition);
   const [activity, setActivity] = useState("idle");
   const [direction, setDirection] = useState("right");
   const [dragging, setDragging] = useState(false);
-  const [paused, setPaused] = useState(false);
+  const [paused, setPaused] = useState(() => savedPausePreference(userId));
   const [idleQuip, setIdleQuip] = useState("");
   const [celebration, setCelebration] = useState(null);
   const [insight, setInsight] = useState(null);
   const persona = insight?.persona && insight.persona !== "Nova" ? insight.persona : "";
   const PersonaIcon = PERSONA_ICONS[persona];
   const positionRef = useRef(position);
+  const petRef = useRef(null);
   const pointerRef = useRef(null);
   const suppressClickRef = useRef(false);
   const velocityRef = useRef(null);
@@ -197,6 +209,69 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
   const headstandTimerRef = useRef(null);
   const noticeTimerRef = useRef(null);
   const celebrateTimerRef = useRef(null);
+  const pauseChannelRef = useRef(null);
+
+  const applyPausePreference = useCallback((next) => {
+    const value = Boolean(next);
+    if (value && petRef.current) {
+      const bounds = petRef.current.getBoundingClientRect();
+      const frozen = clampPosition({ x: bounds.left, y: bounds.top });
+      positionRef.current = frozen;
+      setPosition(frozen);
+    }
+    setPaused(value);
+    if (value) {
+      window.clearTimeout(celebrateTimerRef.current);
+      setCelebration(null);
+      setActivity("idle");
+    }
+    if (userId) {
+      try { window.localStorage.setItem(`${PAUSE_STORAGE_PREFIX}${userId}`, String(value)); } catch { /* private-mode storage */ }
+    }
+  }, [userId]);
+
+  const refreshPausePreference = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const response = await api.get("/ai/preferences", { cache: false });
+      applyPausePreference(Boolean(response.data?.data?.novaMovementPaused));
+    } catch {
+      // Keep the last locally cached preference while offline. A later poll
+      // or focus event will reconcile it with the account again.
+    }
+  }, [applyPausePreference, userId]);
+
+  const setAccountPausePreference = useCallback((next) => {
+    const value = Boolean(next);
+    applyPausePreference(value);
+    pauseChannelRef.current?.postMessage({ type: "nova-movement", paused: value });
+    api.patch("/ai/preferences", { novaMovementPaused: value }).catch(() => void refreshPausePreference());
+  }, [applyPausePreference, refreshPausePreference]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(`${PAUSE_CHANNEL_PREFIX}${userId}`) : null;
+    pauseChannelRef.current = channel;
+    if (channel) {
+      channel.onmessage = (event) => {
+        if (event.data?.type === "nova-movement" && typeof event.data.paused === "boolean") applyPausePreference(event.data.paused);
+      };
+    }
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "hidden") void refreshPausePreference();
+    };
+    void refreshPausePreference();
+    const interval = window.setInterval(refreshWhenVisible, PAUSE_SYNC_INTERVAL_MS);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      channel?.close();
+      if (pauseChannelRef.current === channel) pauseChannelRef.current = null;
+    };
+  }, [applyPausePreference, refreshPausePreference, userId]);
 
   const updatePosition = useCallback((next, { persist = false } = {}) => {
     const clamped = clampPosition(next);
@@ -220,7 +295,7 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
   useEffect(() => {
     return onNovaCelebrate((event) => {
       const config = CELEBRATIONS[event.detail?.type];
-      if (!config || reduceMotion) return;
+      if (!config || reduceMotion || paused) return;
       setCelebration(config);
       setActivity(config.activity);
       window.clearTimeout(celebrateTimerRef.current);
@@ -229,7 +304,7 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
         setActivity("idle");
       }, CELEBRATION_HOLD_MS);
     });
-  }, [reduceMotion]);
+  }, [paused, reduceMotion]);
 
   useEffect(() => {
     let active = true;
@@ -249,7 +324,7 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
         try { lastSeenId = window.localStorage.getItem(SEEN_INSIGHT_KEY) || ""; } catch { /* private-mode storage */ }
         if (next.id === lastSeenId) return;
         setIdleQuip(next.message);
-        if (!reduceMotion && (next.severity === "attention" || next.severity === "urgent")) {
+        if (!reduceMotion && !paused && (next.severity === "attention" || next.severity === "urgent")) {
           setActivity("nod");
           window.clearTimeout(noticeTimerRef.current);
           noticeTimerRef.current = window.setTimeout(() => setActivity("idle"), 1800);
@@ -258,21 +333,20 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
       })
       .catch(() => {});
     return () => { active = false; };
-  }, [currentPath, reduceMotion]);
+  }, [currentPath, paused, reduceMotion]);
 
   useEffect(() => {
-    if (reduceMotion) return undefined;
+    if (reduceMotion || paused) {
+      setActivity("idle");
+      return undefined;
+    }
     const greetTimer = window.setTimeout(() => setActivity("wave"), 700);
     const settleTimer = window.setTimeout(() => setActivity("idle"), 2500);
     return () => {
       window.clearTimeout(greetTimer);
       window.clearTimeout(settleTimer);
     };
-    // Greets once on mount only — a fresh mascot instance per route (it's
-    // keyed by location.pathname) means this also re-waves on navigation,
-    // which reads as "Nova noticed you're here" rather than a bug.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [paused, reduceMotion]);
 
   useEffect(() => {
     if (reduceMotion || paused) {
@@ -418,7 +492,7 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
     const offset = offsets[event.key];
     if (!offset) return;
     event.preventDefault();
-    setPaused(true);
+    if (!paused) setAccountPausePreference(true);
     if (offset[0]) setDirection(offset[0] < 0 ? "left" : "right");
     updatePosition({ x: positionRef.current.x + offset[0], y: positionRef.current.y + offset[1] }, { persist: true });
   }
@@ -438,6 +512,7 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
 
   return (
     <div
+      ref={petRef}
       className={`nova-pet fixed left-0 top-0 z-0 pointer-events-none ${dragging ? "is-dragging" : ""} is-${activity}`}
       style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0)` }}
       data-activity={activity}
@@ -463,7 +538,7 @@ export default function NovaCatMascot({ onActivate, firstName = "", currentPath 
         </button>
         <button
           type="button"
-          onClick={() => setPaused((current) => !current)}
+          onClick={() => setAccountPausePreference(!paused)}
           aria-label={paused ? "Resume Nova’s playful movement" : "Pause Nova’s playful movement"}
           aria-pressed={paused}
           className="nova-pet-pause absolute -right-1 top-0 flex h-9 w-9 items-center justify-center rounded-full border border-brand-100 bg-white text-brand-700 opacity-0 shadow-md transition hover:bg-brand-50 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 group-hover:opacity-100"

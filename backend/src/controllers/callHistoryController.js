@@ -24,6 +24,7 @@ const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 const callStatuses = new Set(["RINGING", "ANSWERED", "COMPLETED", "MISSED", "FAILED"]);
 const callDirections = new Set(["INBOUND", "OUTBOUND"]);
 const callResolutions = new Set(["UNRESOLVED", "LINKED_LEAD", "LINKED_CLIENT", "LINKED_APPOINTMENT", "SPAM"]);
+export const CALL_BUNDLE_WINDOW_MS = 30 * 60_000;
 
 const callInclude = {
   lead: { select: { id: true, leadNumber: true, firstName: true, lastName: true, phone: true, status: true, stage: true, owner: { select: { id: true, fullName: true } } } },
@@ -139,6 +140,51 @@ async function addEngagementSummaries(data, agencyId) {
   });
 }
 
+async function addCallbackSummaries(data, req) {
+  const missedCalls = data.filter((call) => call.direction === "INBOUND" && call.status === "MISSED" && call.remoteNumberNormalized);
+  if (!missedCalls.length) return data;
+  const numbers = [...new Set(missedCalls.map((call) => call.remoteNumberNormalized))];
+  const earliestMissedAt = new Date(Math.min(...missedCalls.map((call) => new Date(call.startedAt).getTime())));
+  const successfulCallbacks = await prisma.callSession.findMany({
+    where: {
+      agencyId: req.auth.agencyId,
+      provider: "TWILIO",
+      direction: "OUTBOUND",
+      remoteNumberNormalized: { in: numbers },
+      startedAt: { gt: earliestMissedAt },
+      AND: [
+        callAccessWhere(req),
+        { OR: [{ answeredAt: { not: null } }, { status: "COMPLETED", durationSeconds: { gt: 0 } }] },
+      ],
+    },
+    select: {
+      id: true,
+      remoteNumberNormalized: true,
+      startedAt: true,
+      handledBy: { select: { id: true, fullName: true } },
+    },
+    orderBy: { startedAt: "desc" },
+  });
+  const callbacksByNumber = new Map();
+  for (const callback of successfulCallbacks) {
+    if (!callbacksByNumber.has(callback.remoteNumberNormalized)) callbacksByNumber.set(callback.remoteNumberNormalized, callback);
+  }
+  return data.map((call) => {
+    if (call.direction !== "INBOUND" || call.status !== "MISSED" || !call.remoteNumberNormalized) return call;
+    const callback = callbacksByNumber.get(call.remoteNumberNormalized);
+    if (!callback || new Date(callback.startedAt) <= new Date(call.startedAt)) return { ...call, callback: { status: "DUE" } };
+    return {
+      ...call,
+      callback: {
+        status: "CONTACTED_BACK",
+        callId: callback.id,
+        contactedAt: callback.startedAt,
+        handledBy: callback.handledBy,
+      },
+    };
+  });
+}
+
 async function addMatchSummaries(data, agencyId) {
   const numbers = [...new Set(data.map((item) => item.remoteNumberNormalized).filter(Boolean))];
   if (!numbers.length) return data.map((item) => ({ ...item, matchSummary: { leads: [], clients: [] } }));
@@ -159,6 +205,58 @@ async function addMatchSummaries(data, agencyId) {
       clients: clients.filter((client) => [client.phoneNormalized, client.secondaryPhoneNormalized].includes(item.remoteNumberNormalized)),
     },
   }));
+}
+
+function bundleKey(call) {
+  // Never merge unidentified/private calls merely because both lack a
+  // number. Each remains its own interaction unless a real normalized phone
+  // number ties the attempts together.
+  return call.remoteNumberNormalized || (call.remoteNumber ? normalizeCommunicationPhone(call.remoteNumber) : "") || `call:${call.id}`;
+}
+
+// The list is newest-first. Repeated attempts to/from the same number within
+// 30 minutes become one phone-style interaction row while the underlying
+// CallSession records remain independent for audit, recordings, and actions.
+export function bundleCallsByTime(calls, windowMs = CALL_BUNDLE_WINDOW_MS) {
+  const bundles = [];
+  const latestBundleByNumber = new Map();
+  for (const call of calls) {
+    const key = bundleKey(call);
+    const startedAtMs = new Date(call.startedAt).getTime();
+    const candidate = latestBundleByNumber.get(key);
+    const candidateOldestMs = candidate ? new Date(candidate.bundle.firstStartedAt).getTime() : null;
+    if (candidate && Number.isFinite(startedAtMs) && candidateOldestMs - startedAtMs <= windowMs) {
+      candidate.bundle.attempts.push(call);
+      candidate.bundle.attemptCount += 1;
+      candidate.bundle.firstStartedAt = call.startedAt;
+      candidate.bundle.totalDurationSeconds += Number(call.durationSeconds || 0);
+      if (call.resolution === "UNRESOLVED") candidate.bundle.unresolvedCount += 1;
+      if (call.followUp?.status === "PENDING") candidate.bundle.pendingFollowUpCount += 1;
+      if (call.status === "MISSED" && call.recordingUrl && !call.recordingPlayedAt) candidate.bundle.newVoicemailCount += 1;
+      if (call.direction === "INBOUND" && call.status === "MISSED" && call.callback?.status !== "CONTACTED_BACK") candidate.bundle.callbackDueCount += 1;
+      if (call.direction === "INBOUND" && call.status === "MISSED" && call.callback?.status === "CONTACTED_BACK") candidate.bundle.contactedBackCount += 1;
+      continue;
+    }
+    const bundle = {
+      ...call,
+      bundle: {
+        attemptCount: 1,
+        attempts: [call],
+        firstStartedAt: call.startedAt,
+        lastStartedAt: call.startedAt,
+        totalDurationSeconds: Number(call.durationSeconds || 0),
+        unresolvedCount: call.resolution === "UNRESOLVED" ? 1 : 0,
+        pendingFollowUpCount: call.followUp?.status === "PENDING" ? 1 : 0,
+        newVoicemailCount: call.status === "MISSED" && call.recordingUrl && !call.recordingPlayedAt ? 1 : 0,
+        callbackDueCount: call.direction === "INBOUND" && call.status === "MISSED" && call.callback?.status !== "CONTACTED_BACK" ? 1 : 0,
+        contactedBackCount: call.direction === "INBOUND" && call.status === "MISSED" && call.callback?.status === "CONTACTED_BACK" ? 1 : 0,
+        windowMinutes: Math.round(windowMs / 60_000),
+      },
+    };
+    bundles.push(bundle);
+    latestBundleByNumber.set(key, bundle);
+  }
+  return bundles;
 }
 
 export async function listCalls(req, res) {
@@ -190,13 +288,18 @@ export async function listCalls(req, res) {
     ...(handledByUserId ? { handledByUserId } : {}),
   };
   const [raw, total, unresolved] = await Promise.all([
-    prisma.callSession.findMany({ where, include: callInclude, orderBy: { lastEventAt: "desc" }, skip: (page - 1) * limit, take: limit }),
+    // A phone log is chronological by when the call began. lastEventAt can
+    // jump much later when a delayed recording/status callback arrives and
+    // would break deterministic time bundles.
+    prisma.callSession.findMany({ where, include: callInclude, orderBy: { startedAt: "desc" }, skip: (page - 1) * limit, take: limit }),
     prisma.callSession.count({ where }),
     prisma.callSession.count({ where: { agencyId: req.auth.agencyId, provider: "TWILIO", resolution: "UNRESOLVED", ...callAccessWhere(req) } }),
   ]);
   const matched = await addMatchSummaries(raw, req.auth.agencyId);
-  const data = await addEngagementSummaries(matched, req.auth.agencyId);
-  res.json({ data, meta: { page, limit, total, unresolved, hasMore: page * limit < total } });
+  const enriched = await addEngagementSummaries(matched, req.auth.agencyId);
+  const callbackAware = await addCallbackSummaries(enriched, req);
+  const data = bundleCallsByTime(callbackAware);
+  res.json({ data, meta: { page, limit, total, unresolved, pageCalls: raw.length, pageInteractions: data.length, hasMore: page * limit < total } });
 }
 
 const performanceRangeSince = {
@@ -275,8 +378,33 @@ export async function listCallPerformance(req, res) {
 }
 
 export async function getCall(req, res) {
-  const [data] = await addEngagementSummaries([await requireCall(req)], req.auth.agencyId);
+  const enriched = await addEngagementSummaries([await requireCall(req)], req.auth.agencyId);
+  const [data] = await addCallbackSummaries(enriched, req);
   res.json({ data });
+}
+
+export async function listCallContactHistory(req, res) {
+  const anchor = await requireCall(req);
+  const normalized = anchor.remoteNumberNormalized || normalizeCommunicationPhone(anchor.remoteNumber);
+  if (!normalized) {
+    const [data] = await addEngagementSummaries([anchor], req.auth.agencyId);
+    return res.json({ data: [data], meta: { total: 1, truncated: false } });
+  }
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 100);
+  const where = {
+    agencyId: req.auth.agencyId,
+    provider: "TWILIO",
+    remoteNumberNormalized: normalized,
+    AND: [callAccessWhere(req)],
+  };
+  const [raw, total] = await Promise.all([
+    prisma.callSession.findMany({ where, include: callInclude, orderBy: { startedAt: "desc" }, take: limit }),
+    prisma.callSession.count({ where }),
+  ]);
+  const matched = await addMatchSummaries(raw, req.auth.agencyId);
+  const enriched = await addEngagementSummaries(matched, req.auth.agencyId);
+  const data = await addCallbackSummaries(enriched, req);
+  return res.json({ data, meta: { total, truncated: total > data.length } });
 }
 
 // Twilio's recording media URL requires the account's own credentials to
@@ -296,6 +424,19 @@ export async function streamCallRecording(req, res) {
   res.set("Cache-Control", "private, max-age=3600");
   res.type(response.headers.get("content-type") || "audio/mpeg");
   res.send(Buffer.from(await response.arrayBuffer()));
+}
+
+export async function markCallRecordingPlayed(req, res) {
+  const call = await requireCall(req, {});
+  if (!call.recordingUrl) throw createHttpError(404, "No recording is available for this call.", "RECORDING_NOT_FOUND");
+  const playedAt = call.recordingPlayedAt || new Date();
+  if (!call.recordingPlayedAt) {
+    await prisma.callSession.updateMany({
+      where: { id: call.id, agencyId: req.auth.agencyId, recordingPlayedAt: null },
+      data: { recordingPlayedAt: playedAt },
+    });
+  }
+  res.json({ data: { id: call.id, recordingPlayedAt: playedAt } });
 }
 
 export async function getCallSmsOptions(req, res) {

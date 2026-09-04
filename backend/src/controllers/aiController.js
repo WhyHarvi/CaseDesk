@@ -1,4 +1,5 @@
 import { askCaseDeskAI, checkCaseDeskAI, extractCaseDeskIntent } from "../services/ollama.service.js";
+import prisma from "../services/prisma/client.js";
 import { resolveCaseDeskAIInsight, resolveProactiveNovaInsight } from "../services/aiInsightService.js";
 import { shouldExtractCaseDeskIntent } from "../services/aiIntentService.js";
 import { logger } from "../services/logger.js";
@@ -70,6 +71,27 @@ export async function getCaseDeskProactiveInsight(req, res) {
   const entityId = entityType && typeof req.query?.entityId === "string" ? req.query.entityId.slice(0, 100) : "";
   const insight = await resolveProactiveNovaInsight(req, { currentPath, entityType, entityId });
   res.json({ success: true, insight: insight || null });
+}
+
+export async function getNovaPreferences(req, res) {
+  const user = await prisma.user.findFirst({
+    where: { id: req.auth.userId, agencyId: req.auth.agencyId },
+    select: { novaMovementPaused: true, updatedAt: true },
+  });
+  if (!user) throw createHttpError(404, "User account not found.", "USER_NOT_FOUND");
+  res.json({ success: true, data: user });
+}
+
+export async function updateNovaPreferences(req, res) {
+  if (typeof req.body?.novaMovementPaused !== "boolean") {
+    throw createHttpError(400, "Nova movement preference must be true or false.", "VALIDATION_ERROR");
+  }
+  const result = await prisma.user.updateMany({
+    where: { id: req.auth.userId, agencyId: req.auth.agencyId },
+    data: { novaMovementPaused: req.body.novaMovementPaused },
+  });
+  if (!result.count) throw createHttpError(404, "User account not found.", "USER_NOT_FOUND");
+  res.json({ success: true, data: { novaMovementPaused: req.body.novaMovementPaused } });
 }
 
 export async function getCaseDeskAIStatus(_req, res) {

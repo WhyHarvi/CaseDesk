@@ -390,21 +390,66 @@ test("call history reports who dialed, answered, or was rung instead of a generi
     source("../src/services/twilioCallService.js"),
     source("../../frontend/src/pages/CallHistoryPage.jsx"),
   ]);
+  const historySection = callsPage.slice(
+    callsPage.indexOf("export function CallHistorySection"),
+    callsPage.indexOf("const PERFORMANCE_RANGES"),
+  );
 
   assert.match(controller, /async function addEngagementSummaries/);
   assert.match(controller, /prisma\.callRingDispatch\.findMany/);
   assert.match(controller, /label: "Dialed by"/);
   assert.match(controller, /answeredCall \? "Answered by"[\s\S]+"Ringing"[\s\S]+"Rang"/);
   assert.match(controller, /const effectiveStatus = call\.status === "COMPLETED"[\s\S]+\? "MISSED" : call\.status/);
-  assert.match(controller, /const data = await addEngagementSummaries\(matched, req\.auth\.agencyId\)/);
+  assert.match(controller, /const enriched = await addEngagementSummaries\(matched, req\.auth\.agencyId\)/);
   assert.match(callService, /queueResult === "bridged" \? "COMPLETED" : "MISSED"/);
   assert.match(callService, /\["MISSED", "FAILED"\]\.includes\(existing\.status\)/);
   assert.match(callsPage, /function engagementSummary/);
   assert.match(callsPage, /if \(value === "COMPLETED"\) return "Answered"/);
   assert.match(callsPage, /function directionTone\(call\)/);
   assert.match(callsPage, /\["MISSED", "FAILED"\]\.includes\(call\.status\)[\s\S]+bg-rose-50 text-rose-700/);
-  assert.match(callsPage, />Engagement<\/th>/);
-  assert.doesNotMatch(callsPage, />Team member<\/th>/);
+  assert.match(historySection, />Engagement<\/th>/);
+  assert.doesNotMatch(historySection, />Team member<\/th>/);
+});
+
+test("call history bundles close attempts and exposes a phone-style per-number timeline", async () => {
+  const [controller, routes, callsPage] = await Promise.all([
+    source("../src/controllers/callHistoryController.js"),
+    source("../src/routes/callHistoryRoutes.js"),
+    source("../../frontend/src/pages/CallHistoryPage.jsx"),
+  ]);
+
+  assert.match(controller, /export const CALL_BUNDLE_WINDOW_MS = 30 \* 60_000/);
+  assert.match(controller, /export function bundleCallsByTime/);
+  assert.match(controller, /orderBy: \{ startedAt: "desc" \}/);
+  assert.match(controller, /const callbackAware = await addCallbackSummaries\(enriched, req\)/);
+  assert.match(controller, /const data = bundleCallsByTime\(callbackAware\)/);
+  assert.match(controller, /export async function listCallContactHistory/);
+  assert.match(controller, /AND: \[callAccessWhere\(req\)\]/);
+  assert.match(routes, /router\.get\("\/:id\/history", asyncHandler\(listCallContactHistory\)\)/);
+  assert.match(callsPage, /Repeated calls with the same number within 30 minutes are bundled/);
+  assert.match(callsPage, /function CallTimeline/);
+  assert.match(callsPage, /api\.get\(`\/call-history\/\$\{call\.id\}\/history`\)/);
+  assert.match(callsPage, /onClick=\{\(\) => openCall\(call, "history"\)\}[\s\S]*?>History<\/button>/);
+  assert.match(callsPage, />Call history<\/button>/);
+  assert.match(callsPage, /<CallRecordingPlayer callId=\{item\.id\}/);
+  assert.match(callsPage, /Manage this call/);
+});
+
+test("missed-call attention progresses from new voicemail to callback due to contacted back", async () => {
+  const [controller, callsPage] = await Promise.all([
+    source("../src/controllers/callHistoryController.js"),
+    source("../../frontend/src/pages/CallHistoryPage.jsx"),
+  ]);
+
+  assert.match(controller, /async function addCallbackSummaries/);
+  assert.match(controller, /direction: "OUTBOUND"/);
+  assert.match(controller, /answeredAt: \{ not: null \}/);
+  assert.match(controller, /status: "COMPLETED", durationSeconds: \{ gt: 0 \}/);
+  assert.match(controller, /status: "CONTACTED_BACK"/);
+  assert.match(callsPage, /function CallAttention/);
+  assert.match(callsPage, /"New voicemail"/);
+  assert.match(callsPage, /"Callback due"/);
+  assert.match(callsPage, /Contacted back/);
 });
 
 test("the clients UI calls clients through the softphone too, with the same outcome popup", async () => {
@@ -946,7 +991,11 @@ test("the settings panel's third greeting (\"while waiting to connect\") has the
 });
 
 test("call recordings (including voicemails) play with one click instead of linking out to Twilio's raw, credential-gated media URL", async () => {
-  const controller = await source("../src/controllers/callHistoryController.js");
+  const [controller, schema, playedMigration] = await Promise.all([
+    source("../src/controllers/callHistoryController.js"),
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260904140000_add_call_recording_played_at/migration.sql"),
+  ]);
   // Twilio's recording media URL 401s without the account's own Basic Auth
   // credentials, so it can never be handed to the browser directly — this
   // proxies the bytes through the same access-checked requireCall path
@@ -963,6 +1012,11 @@ test("call recordings (including voicemails) play with one click instead of link
 
   const routes = await source("../src/routes/callHistoryRoutes.js");
   assert.match(routes, /router\.get\("\/:id\/recording", asyncHandler\(streamCallRecording\)\);/);
+  assert.match(schema, /recordingPlayedAt\s+DateTime\?\s+@map\("recording_played_at"\)/);
+  assert.match(playedMigration, /ADD COLUMN "recording_played_at" TIMESTAMP\(3\)/);
+  assert.match(controller, /export async function markCallRecordingPlayed/);
+  assert.match(controller, /recordingPlayedAt: null/);
+  assert.match(routes, /router\.post\("\/:id\/recording-played", asyncHandler\(markCallRecordingPlayed\)\);/);
 
   const player = await source("../../frontend/src/components/calls/CallRecordingPlayer.jsx");
   // Fetched as a blob (not a plain <audio src>) specifically because the
@@ -980,7 +1034,9 @@ test("call recordings (including voicemails) play with one click instead of link
   // A genuine voicemail (nobody answered) is labeled distinctly from a
   // recording of an answered conversation, rather than both reading
   // identically as just "Recording".
-  assert.match(player, /const idleLabel = isVoicemail \? "Play voicemail" : "Play recording";/);
+  assert.match(player, /const idleLabel = isVoicemail \? \(hasBeenPlayed \? "Play voicemail" : "Play new voicemail"\) : "Play recording";/);
+  assert.match(player, /api\.post\(`\/call-history\/\$\{callId\}\/recording-played`\)/);
+  assert.match(player, /onPlay=\{handlePlay\}/);
   assert.match(player, /const buttonSize = compact \? "h-7 px-2\.5 text-\[10px\]" : "h-9 px-4 text-xs";/);
 
   const [historyPage, leadSheet] = await Promise.all([
@@ -988,9 +1044,11 @@ test("call recordings (including voicemails) play with one click instead of link
     source("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx"),
   ]);
   assert.match(historyPage, /import CallRecordingPlayer from "\.\.\/components\/calls\/CallRecordingPlayer";/);
-  assert.match(historyPage, /\{call\.recordingUrl \? <CallRecordingPlayer callId=\{call\.id\} isVoicemail=\{call\.status === "MISSED"\} \/> : null\}/);
+  assert.match(historyPage, /<CallRecordingPlayer callId=\{call\.id\} isVoicemail=\{call\.status === "MISSED"\} hasBeenPlayed=\{Boolean\(call\.recordingPlayedAt\)\}/);
+  assert.match(historyPage, /bundle\.newVoicemailCount/);
+  assert.match(historyPage, /New voicemail/);
   assert.doesNotMatch(historyPage, /<a href=\{call\.recordingUrl\}/);
   assert.match(leadSheet, /import CallRecordingPlayer from "\.\.\/\.\.\/\.\.\/components\/calls\/CallRecordingPlayer";/);
-  assert.match(leadSheet, /<CallRecordingPlayer callId=\{call\.id\} isVoicemail=\{call\.status === "MISSED"\} compact \/>/);
+  assert.match(leadSheet, /<CallRecordingPlayer callId=\{call\.id\} isVoicemail=\{call\.status === "MISSED"\} hasBeenPlayed=\{Boolean\(call\.recordingPlayedAt\)\} compact \/>/);
   assert.doesNotMatch(leadSheet, /<a href=\{call\.recordingUrl\}/);
 });

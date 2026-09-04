@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/http.js";
 import {
   createLeadFromCall,
   getCall,
+  listCallContactHistory,
   getCallSmsOptions,
   getCallSmsThread,
   linkCallToClient,
@@ -12,6 +13,7 @@ import {
   listCallPerformance,
   listCalls,
   markCallSpam,
+  markCallRecordingPlayed,
   recordCallOutcome,
   sendCallSms,
   streamCallRecording,
@@ -21,11 +23,13 @@ const router = Router();
 
 router.get("/", asyncHandler(listCalls));
 router.get("/performance", asyncHandler(listCallPerformance));
-router.get("/:id", asyncHandler(getCall));
+router.get("/:id/history", asyncHandler(listCallContactHistory));
 router.get("/:id/recording", asyncHandler(streamCallRecording));
+router.post("/:id/recording-played", asyncHandler(markCallRecordingPlayed));
 router.get("/:id/sms-options", asyncHandler(getCallSmsOptions));
 router.get("/:id/sms-thread", asyncHandler(getCallSmsThread));
 router.get("/:id/candidates", asyncHandler(listCallCandidates));
+router.get("/:id", asyncHandler(getCall));
 router.post("/:id/link-lead", asyncHandler(linkCallToLead));
 router.post("/:id/link-client", asyncHandler(linkCallToClient));
 router.post("/:id/link-appointment", asyncHandler(linkCallToAppointment));

@@ -8,6 +8,7 @@ import {
   CircleAlert,
   Clock3,
   ExternalLink,
+  History,
   Link2,
   Loader2,
   MessageCircle,
@@ -92,6 +93,47 @@ function directionTone(call) {
   return call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : "bg-emerald-50 text-emerald-700";
 }
 
+function bundleSummary(call) {
+  return call.bundle || {
+    attemptCount: 1,
+    attempts: [call],
+    firstStartedAt: call.startedAt,
+    lastStartedAt: call.startedAt,
+    totalDurationSeconds: Number(call.durationSeconds || 0),
+    unresolvedCount: call.resolution === "UNRESOLVED" ? 1 : 0,
+    pendingFollowUpCount: call.followUp?.status === "PENDING" ? 1 : 0,
+    newVoicemailCount: call.status === "MISSED" && call.recordingUrl && !call.recordingPlayedAt ? 1 : 0,
+    callbackDueCount: call.direction === "INBOUND" && call.status === "MISSED" && call.callback?.status !== "CONTACTED_BACK" ? 1 : 0,
+    contactedBackCount: call.direction === "INBOUND" && call.status === "MISSED" && call.callback?.status === "CONTACTED_BACK" ? 1 : 0,
+    windowMinutes: 30,
+  };
+}
+
+function attemptCountLabel(call) {
+  const count = bundleSummary(call).attemptCount;
+  return count === 1 ? "1 call" : `${count} calls`;
+}
+
+function CallAttention({ call }) {
+  const bundle = bundleSummary(call);
+  if (bundle.newVoicemailCount) return <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800 ring-1 ring-inset ring-blue-200"><PhoneMissed className="h-3.5 w-3.5" aria-hidden="true" />{bundle.newVoicemailCount > 1 ? `${bundle.newVoicemailCount} new voicemails` : "New voicemail"}</span>;
+  if (bundle.callbackDueCount) return <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />{bundle.callbackDueCount > 1 ? `${bundle.callbackDueCount} callbacks due` : "Callback due"}</span>;
+  if (bundle.contactedBackCount) return <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-200"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />Contacted back</span>;
+  if (bundle.unresolvedCount) return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />{bundle.unresolvedCount > 1 ? `${bundle.unresolvedCount} need matching` : "Match caller"}</span>;
+  if (bundle.pendingFollowUpCount) return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span>;
+  return <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>;
+}
+
+function MissedCallAttention({ call }) {
+  if (call.direction !== "INBOUND" || call.status !== "MISSED") return null;
+  if (call.recordingUrl && !call.recordingPlayedAt) return <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800">New voicemail</span>;
+  if (call.callback?.status === "CONTACTED_BACK") {
+    const detail = [call.callback.handledBy?.fullName, when(call.callback.contactedAt)].filter(Boolean).join(" · ");
+    return <span title={detail || undefined} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800">Contacted back</span>;
+  }
+  return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">Callback due</span>;
+}
+
 function EmptyCalls({ unresolved, provider }) {
   return (
     <div className="flex min-h-80 flex-col items-center justify-center px-6 text-center">
@@ -106,6 +148,7 @@ function MobileCallCard({ call, onOpen, provider, onCall, onSms }) {
   const name = personName(call) || call.remoteNumber || "Private number";
   const detail = personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched";
   const engagement = engagementSummary(call, { compact: true });
+  const bundle = bundleSummary(call);
   return (
     // A <div> here, not a <button> — the Call button below needs to nest
     // inside the same card without landing inside another interactive
@@ -157,12 +200,50 @@ function MobileCallCard({ call, onOpen, provider, onCall, onSms }) {
             <span><span className="block text-slate-400">{engagement.label}</span><span className="mt-0.5 block truncate font-medium text-slate-700" title={engagement.title || undefined}>{engagement.text}</span></span>
           </span>
           <span className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-            <span className="text-xs text-slate-500">{when(call.startedAt)}</span>
-            {call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}
+            <span className="text-xs text-slate-500">{when(call.startedAt)}{bundle.attemptCount > 1 ? ` · ${attemptCountLabel(call)}` : ""}</span>
+            <CallAttention call={call} />
           </span>
         </span>
       </span>
     </div>
+  );
+}
+
+function CallTimeline({ calls, loading, activeCallId, truncated, onSelect, onRecordingPlayed }) {
+  if (loading) return <div className="space-y-3">{Array.from({ length: 5 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-2xl bg-slate-100" />)}</div>;
+  return (
+    <section aria-labelledby="call-timeline-title">
+      <div className="mb-5 flex items-end justify-between gap-3 border-b border-slate-200 pb-4">
+        <div><h3 id="call-timeline-title" className="text-base font-semibold text-slate-950">Call history</h3><p className="mt-1 text-xs leading-5 text-slate-500">Every accessible call to or from this number, newest first.</p></div>
+        <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-500">{calls.length}{truncated ? "+" : ""} {calls.length === 1 ? "call" : "calls"}</span>
+      </div>
+      <ol className="relative ml-2 border-l border-blue-200">
+        {calls.map((item) => {
+          const engagement = engagementSummary(item, { compact: true });
+          return (
+            <li key={item.id} className="relative pb-5 pl-6 last:pb-0">
+              <span className={`absolute -left-[17px] top-0 flex h-8 w-8 items-center justify-center rounded-full border-4 border-slate-50 ${directionTone(item)}`} aria-hidden="true"><DirectionIcon value={item.direction} className="h-3.5 w-3.5" /></span>
+              <article className={`rounded-2xl border bg-white px-4 py-3 shadow-sm ${item.id === activeCallId ? "border-blue-300 ring-2 ring-blue-100" : "border-slate-200"}`}>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold text-slate-900">{callDirectionLabel(item.direction)}</p>{item.id === activeCallId ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">Selected</span> : null}<MissedCallAttention call={item} /></div><p className="mt-0.5 text-xs tabular-nums text-slate-500">{when(item.startedAt)}</p></div>
+                  <CallStatus value={item.status} direction={item.direction} />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs sm:grid-cols-3">
+                  <div><p className="text-slate-400">Duration</p><p className="mt-1 font-semibold tabular-nums text-slate-700">{duration(item.durationSeconds)}</p></div>
+                  <div><p className="text-slate-400">{engagement.label}</p><p className="mt-1 font-semibold text-slate-700">{engagement.text}</p></div>
+                  <div><p className="text-slate-400">Outcome</p><p className="mt-1 font-semibold text-slate-700">{item.disposition ? humanize(item.disposition) : "Not recorded"}</p></div>
+                </div>
+                {item.outcomeNotes ? <p className="mt-3 border-l-2 border-blue-200 pl-3 text-xs leading-5 text-slate-600">{item.outcomeNotes}</p> : null}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {item.recordingUrl ? <CallRecordingPlayer callId={item.id} isVoicemail={item.status === "MISSED"} hasBeenPlayed={Boolean(item.recordingPlayedAt)} onPlayed={(recordingPlayedAt) => onRecordingPlayed(item.id, recordingPlayedAt)} /> : null}
+                  {item.id !== activeCallId ? <button type="button" onClick={() => onSelect(item)} className="min-h-9 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-blue-700 transition hover:bg-blue-50">Manage this call</button> : null}
+                </div>
+              </article>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
 
@@ -183,10 +264,13 @@ function MatchResults({ title, records, kind, busy, onLink }) {
   );
 }
 
-function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) {
+function CallDrawer({ call, staff, onClose, onChanged, onSelectCall, provider, initialMode }) {
   const { role } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState(initialMode || (call.resolution === "UNRESOLVED" ? "resolve" : "outcome"));
+  const [mode, setMode] = useState(initialMode || (call.resolution === "UNRESOLVED" ? "resolve" : "history"));
+  const [contactHistory, setContactHistory] = useState(call.bundle?.attempts || [call]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyTruncated, setHistoryTruncated] = useState(false);
   const [search, setSearch] = useState(call.remoteNumber || "");
   const [candidates, setCandidates] = useState({ leads: [], clients: [] });
   const [candidateLoading, setCandidateLoading] = useState(false);
@@ -268,6 +352,23 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
     if (mode === "sms") void loadSmsThread({ sync: true });
   }, [mode, loadSmsThread]);
 
+  useEffect(() => {
+    if (mode !== "history") return undefined;
+    let cancelled = false;
+    setHistoryLoading(true);
+    setError("");
+    api.get(`/call-history/${call.id}/history`).then((response) => {
+      if (cancelled) return;
+      setContactHistory(response.data.data || [call]);
+      setHistoryTruncated(Boolean(response.data.meta?.truncated));
+    }).catch((reason) => {
+      if (!cancelled) setError(reason.response?.data?.message || "Call history could not be loaded.");
+    }).finally(() => {
+      if (!cancelled) setHistoryLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [mode, call.id]);
+
   async function mutate(path, body = {}) {
     try {
       setBusy(true);
@@ -323,6 +424,7 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
   const suggestedLeads = call.matchSummary?.leads || [];
   const suggestedClients = call.matchSummary?.clients || [];
   const whatsAppPhone = whatsappNumber(call.remoteNumberNormalized || call.remoteNumber);
+  const bundle = bundleSummary(call);
 
   function openBooking() {
     if (call.appointment?.id) {
@@ -351,7 +453,7 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
             <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Number</p><p className="mt-1 truncate text-sm font-semibold text-slate-800">{call.remoteNumber || "Private"}</p></div>
-            <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Duration</p><p className="mt-1 text-sm font-semibold text-slate-800">{duration(call.durationSeconds)}</p></div>
+            <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{bundle.attemptCount > 1 ? "Bundled activity" : "Duration"}</p><p className="mt-1 text-sm font-semibold text-slate-800">{bundle.attemptCount > 1 ? `${attemptCountLabel(call)} · ${duration(bundle.totalDurationSeconds)}` : duration(call.durationSeconds)}</p></div>
             <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{engagement.label}</p><p className="mt-1 text-sm font-semibold leading-5 text-slate-800">{engagement.text}</p></div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -359,14 +461,15 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
             {call.remoteNumber ? <button type="button" onClick={() => setMode("sms")} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-4 text-xs font-semibold text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-4 w-4" />Send SMS</button> : null}
             {whatsAppPhone ? <a href={`https://wa.me/${whatsAppPhone}`} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-xs font-semibold text-white transition hover:bg-[#1fb85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2" aria-label={`Open WhatsApp chat with ${call.remoteNumber}`}><MessageCircle className="h-4 w-4" />WhatsApp <ExternalLink className="h-3 w-3" /></a> : null}
             {call.remoteNumber ? <a href={`tel:${call.remoteNumber}`} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"><Phone className="h-3.5 w-3.5" />Call with Twilio</a> : null}
-            {call.recordingUrl ? <CallRecordingPlayer callId={call.id} isVoicemail={call.status === "MISSED"} /> : null}
+            {call.recordingUrl ? <CallRecordingPlayer callId={call.id} isVoicemail={call.status === "MISSED"} hasBeenPlayed={Boolean(call.recordingPlayedAt)} onPlayed={() => { void onChanged(); }} /> : null}
             {call.lead ? <Link to={`/leads?lead=${encodeURIComponent(call.lead.id)}`} className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700">Open {call.lead.leadNumber}</Link> : null}
             {call.client ? <Link to={`/app/clients/${call.client.id}`} className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700">Open {call.client.clientNumber}</Link> : null}
           </div>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex gap-1 border-b border-slate-200 bg-white px-5 py-2 sm:px-6">
+          <div className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-5 py-2 sm:px-6">
+            <button type="button" onClick={() => setMode("history")} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold ${mode === "history" ? "bg-sky-50 text-sky-700" : "text-slate-500"}`}><History className="h-3.5 w-3.5" />Call history</button>
             <button type="button" onClick={() => setMode("resolve")} className={`rounded-full px-3.5 py-2 text-xs font-semibold ${mode === "resolve" ? "bg-sky-50 text-sky-700" : "text-slate-500"}`}>Match caller</button>
             <button type="button" onClick={() => setMode("outcome")} className={`rounded-full px-3.5 py-2 text-xs font-semibold ${mode === "outcome" ? "bg-sky-50 text-sky-700" : "text-slate-500"}`}>Record outcome</button>
             <button type="button" onClick={() => setMode("sms")} className={`rounded-full px-3.5 py-2 text-xs font-semibold ${mode === "sms" ? "bg-sky-50 text-sky-700" : "text-slate-500"}`}>Send SMS</button>
@@ -375,7 +478,12 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
           <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
             {error ? <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
-            {mode === "sms" ? (
+            {mode === "history" ? (
+              <CallTimeline calls={contactHistory} loading={historyLoading} activeCallId={call.id} truncated={historyTruncated} onSelect={onSelectCall} onRecordingPlayed={(callId, recordingPlayedAt) => {
+                setContactHistory((current) => current.map((item) => item.id === callId ? { ...item, recordingPlayedAt } : item));
+                void onChanged();
+              }} />
+            ) : mode === "sms" ? (
               <form onSubmit={sendSms} className="space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <h3 className="min-w-0 flex-1 text-base font-semibold text-slate-950">Text {personName(call) || call.remoteNumber}</h3>
@@ -582,6 +690,7 @@ export function CallHistorySection({ provider = "TWILIO" }) {
           <div>
             <p className="mb-2 text-xs font-semibold text-slate-600">Filter calls</p>
             <div className="flex flex-wrap gap-2">{[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`], ["missed", "Missed calls"], ["outbound", "Outgoing"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => update({ view: value === "all" ? "" : value })} className={`min-h-10 rounded-full px-3.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${view === value ? "bg-[#007AFF] text-white shadow-[0_6px_16px_rgba(0,122,255,0.24)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"}`}>{label}</button>)}</div>
+            <p className="mt-2 text-[11px] text-slate-400">Repeated calls with the same number within 30 minutes are bundled into one interaction.</p>
           </div>
           <form onSubmit={(event) => { event.preventDefault(); update({ search: searchDraft.trim() }); }}>
             <label className="block text-xs font-semibold text-slate-600">Search history</label>
@@ -612,16 +721,20 @@ export function CallHistorySection({ provider = "TWILIO" }) {
           </div>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[900px] border-collapse text-left">
-              <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Call</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Engagement</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
-              <tbody>{calls.map((call) => { const callEngagement = engagementSummary(call, { compact: true }); return <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${directionTone(call)}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{callDirectionLabel(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}{call.remoteNumber ? <button type="button" onClick={() => openCall(call, "sms")} aria-label={`Send SMS to ${personName(call) || call.remoteNumber}`} title="Send SMS" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} direction={call.direction} /></td><td className="px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{callEngagement.label}</p><p className="mt-1 max-w-48 font-medium leading-5 text-slate-700" title={callEngagement.title || undefined}>{callEngagement.text}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>; })}</tbody>
+              <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Interaction</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Latest status</th><th className="px-4 py-3">Engagement</th><th className="px-4 py-3">Talk time</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
+              <tbody>{calls.map((call) => {
+                const callEngagement = engagementSummary(call, { compact: true });
+                const bundle = bundleSummary(call);
+                return <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${directionTone(call)}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{callDirectionLabel(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p>{bundle.attemptCount > 1 ? <p className="mt-1 text-[11px] font-semibold text-blue-700">{attemptCountLabel(call)} bundled</p> : null}</div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}{call.remoteNumber ? <button type="button" onClick={() => openCall(call, "sms")} aria-label={`Send SMS to ${personName(call) || call.remoteNumber}`} title="Send SMS" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} direction={call.direction} /></td><td className="px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{callEngagement.label}</p><p className="mt-1 max-w-48 font-medium leading-5 text-slate-700" title={callEngagement.title || undefined}>{callEngagement.text}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(bundle.totalDurationSeconds)}</td><td className="px-4 py-4"><CallAttention call={call} /></td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call, "history")} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call history with ${personName(call) || call.remoteNumber || "private number"}`}>History</button></td></tr>;
+              })}</tbody>
             </table>
           </div>
           </>
         )}
-        <footer className="flex items-center justify-between border-t border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-500"><span className="tabular-nums">{meta.total ? `${(page - 1) * 25 + 1}–${Math.min(page * 25, meta.total)} of ${meta.total}` : "0 calls"}</span><div className="flex items-center gap-2"><button type="button" disabled={page <= 1 || loading} onClick={() => update({ page: String(page - 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-4 w-4" aria-hidden="true" /></button><span className="min-w-16 text-center text-xs font-semibold tabular-nums">Page {page}</span><button type="button" disabled={!meta.hasMore || loading} onClick={() => update({ page: String(page + 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-4 w-4" aria-hidden="true" /></button></div></footer>
+        <footer className="flex items-center justify-between border-t border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-500"><span className="tabular-nums">{meta.total ? `${(page - 1) * 25 + 1}–${Math.min(page * 25, meta.total)} of ${meta.total} calls · ${meta.pageInteractions ?? calls.length} interactions` : "0 calls"}</span><div className="flex items-center gap-2"><button type="button" disabled={page <= 1 || loading} onClick={() => update({ page: String(page - 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-4 w-4" aria-hidden="true" /></button><span className="min-w-16 text-center text-xs font-semibold tabular-nums">Page {page}</span><button type="button" disabled={!meta.hasMore || loading} onClick={() => update({ page: String(page + 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-4 w-4" aria-hidden="true" /></button></div></footer>
       </div>
 
-      {selected ? <CallDrawer key={`${selected.id}:${selected.updatedAt}:${selectedMode}`} call={selected} staff={staff} provider={provider} initialMode={selectedMode} onClose={closeCall} onChanged={async () => { await load({ quiet: true }); }} /> : null}
+      {selected ? <CallDrawer key={`${selected.id}:${selected.updatedAt}:${selectedMode}`} call={selected} staff={staff} provider={provider} initialMode={selectedMode} onClose={closeCall} onSelectCall={(call) => openCall(call, "history")} onChanged={async () => { await load({ quiet: true }); }} /> : null}
     </section>
   );
 }

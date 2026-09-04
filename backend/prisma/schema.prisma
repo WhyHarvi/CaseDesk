@@ -1948,6 +1948,7 @@ model CallSession {
   endedAt                DateTime?       @map("ended_at")
   durationSeconds        Int?            @map("duration_seconds")
   recordingUrl           String?         @map("recording_url")
+  recordingPlayedAt      DateTime?        @map("recording_played_at")
   transcript             String?
   lastEventAt            DateTime        @map("last_event_at")
   resolvedAt             DateTime?       @map("resolved_at")
@@ -2059,6 +2060,7 @@ model User {
   formSignatureImage                   String?                         @map("form_signature_image") @db.Text
   formSignatureStrokes                 Json?                           @map("form_signature_strokes")
   formSignatureUpdatedAt               DateTime?                       @map("form_signature_updated_at")
+  novaMovementPaused                   Boolean                         @default(false) @map("nova_movement_paused")
   createdAt                            DateTime                        @default(now()) @map("created_at")
   updatedAt                            DateTime                        @updatedAt @map("updated_at")
   agency                               Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)

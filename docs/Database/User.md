@@ -10,7 +10,7 @@ risk: critical
 Application identity for staff and clients, linked to Supabase Auth.
 
 ## Important Fields
-`authUserId`, global unique `email`, display/structured names, `role`, `status`, password-change flag, representative/license/signature fields, and avatar data.
+`authUserId`, global unique `email`, display/structured names, `role`, `status`, password-change flag, representative/license/signature fields, avatar data, and the account-scoped `novaMovementPaused` presentation preference.
 
 ## Relationships
 Belongs to [[Agency]], has [[AgencyMember]] rows, optional [[ClientUser]], consultant profile, assignments, authored/actor records, mailbox, notifications, chats, and provider-line assignments.

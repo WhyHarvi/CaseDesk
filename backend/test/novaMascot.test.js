@@ -38,6 +38,31 @@ test("the playful Nova cat opens the existing Nova conversation without blocking
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
+test("Nova's movement pause persists on the user account and synchronizes across tabs and devices", async () => {
+  const [schema, controller, routes, mascot] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../src/controllers/aiController.js"),
+    source("../src/routes/aiRoutes.js"),
+    source("../../frontend/src/components/chat/NovaCatMascot.jsx"),
+  ]);
+
+  assert.match(schema, /novaMovementPaused\s+Boolean\s+@default\(false\) @map\("nova_movement_paused"\)/);
+  assert.match(controller, /where: \{ id: req\.auth\.userId, agencyId: req\.auth\.agencyId \}/);
+  assert.match(controller, /typeof req\.body\?\.novaMovementPaused !== "boolean"/);
+  assert.match(routes, /router\.get\("\/preferences", asyncHandler\(getNovaPreferences\)\)/);
+  assert.match(routes, /router\.patch\("\/preferences"[\s\S]+asyncHandler\(updateNovaPreferences\)\)/);
+  assert.match(mascot, /savedPausePreference\(userId\)/);
+  assert.match(mascot, /new BroadcastChannel\(`\$\{PAUSE_CHANNEL_PREFIX\}\$\{userId\}`\)/);
+  assert.match(mascot, /api\.get\("\/ai\/preferences", \{ cache: false \}\)/);
+  assert.match(mascot, /api\.patch\("\/ai\/preferences", \{ novaMovementPaused: value \}\)/);
+  assert.match(mascot, /PAUSE_SYNC_INTERVAL_MS = 5_000/);
+  assert.match(mascot, /window\.addEventListener\("focus", refreshWhenVisible\)/);
+  assert.match(mascot, /onClick=\{\(\) => setAccountPausePreference\(!paused\)\}/);
+  assert.match(mascot, /const bounds = petRef\.current\.getBoundingClientRect\(\);/);
+  assert.match(mascot, /const frozen = clampPosition\(\{ x: bounds\.left, y: bounds\.top \}\);/);
+  assert.match(mascot, /if \(!config \|\| reduceMotion \|\| paused\) return;/);
+});
+
 test("the cat is only ever mounted in the staff app, never the client portal", async () => {
   const [mainLayout, portalLayout] = await Promise.all([
     source("../../frontend/src/layouts/MainLayout.jsx"),
@@ -140,7 +165,7 @@ test("the cat and the chat panel share one entity-aware insight fetch — explic
   // A new attention/urgent insight gets a brief "nod" (noticing) pose, not
   // a permanent one — it's on its own short revert timer, independent of
   // the drag-fling headstand's.
-  assert.match(mascot, /if \(!reduceMotion && \(next\.severity === "attention" \|\| next\.severity === "urgent"\)\) \{\s*\n\s*setActivity\("nod"\);/);
+  assert.match(mascot, /if \(!reduceMotion && !paused && \(next\.severity === "attention" \|\| next\.severity === "urgent"\)\) \{\s*\n\s*setActivity\("nod"\);/);
   assert.match(mascot, /noticeTimerRef\.current = window\.setTimeout\(\(\) => setActivity\("idle"\), 1800\);/);
   assert.match(mascot, /const pool = \[insight\?\.message, persona, \.\.\.IDLE_QUIPS\]\.filter\(\(quip\) => quip && quip !== current\);/);
 

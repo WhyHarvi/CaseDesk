@@ -22,7 +22,7 @@ function formatTime(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-export default function CallRecordingPlayer({ callId, isVoicemail = false, compact = false }) {
+export default function CallRecordingPlayer({ callId, isVoicemail = false, compact = false, hasBeenPlayed = false, onPlayed }) {
   const [audioUrl, setAudioUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -30,9 +30,12 @@ export default function CallRecordingPlayer({ callId, isVoicemail = false, compa
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const audioRef = useRef(null);
+  const reportingPlayedRef = useRef(false);
+  const reportedPlayedRef = useRef(hasBeenPlayed);
 
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
   useEffect(() => () => { if (activeAudioEl === audioRef.current) activeAudioEl = null; }, []);
+  useEffect(() => { if (hasBeenPlayed) reportedPlayedRef.current = true; }, [hasBeenPlayed]);
 
   const toggle = () => {
     const el = audioRef.current;
@@ -63,7 +66,22 @@ export default function CallRecordingPlayer({ callId, isVoicemail = false, compa
     }
   };
 
-  const idleLabel = isVoicemail ? "Play voicemail" : "Play recording";
+  const handlePlay = () => {
+    setPlaying(true);
+    if (reportedPlayedRef.current || reportingPlayedRef.current) return;
+    reportingPlayedRef.current = true;
+    api.post(`/call-history/${callId}/recording-played`).then((response) => {
+      reportedPlayedRef.current = true;
+      onPlayed?.(response.data.data?.recordingPlayedAt || new Date().toISOString());
+    }).catch(() => {
+      // Playback should never be blocked by a bookkeeping failure. Leave the
+      // voicemail marked new so a later play can retry the idempotent update.
+    }).finally(() => {
+      reportingPlayedRef.current = false;
+    });
+  };
+
+  const idleLabel = isVoicemail ? (hasBeenPlayed ? "Play voicemail" : "Play new voicemail") : "Play recording";
   const buttonLabel = loading ? "Loading…" : error ? "Couldn't load — retry" : audioUrl ? formatTime(playing ? progress : duration) : idleLabel;
   const buttonSize = compact ? "h-7 px-2.5 text-[10px]" : "h-9 px-4 text-xs";
 
@@ -73,7 +91,7 @@ export default function CallRecordingPlayer({ callId, isVoicemail = false, compa
         <audio
           ref={audioRef}
           src={audioUrl}
-          onPlay={() => setPlaying(true)}
+          onPlay={handlePlay}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
           onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
@@ -86,7 +104,7 @@ export default function CallRecordingPlayer({ callId, isVoicemail = false, compa
         onClick={handleClick}
         disabled={loading}
         className={`inline-flex items-center gap-1.5 rounded-full border font-semibold transition disabled:opacity-60 ${buttonSize} ${
-          error ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+          error ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100" : isVoicemail && !hasBeenPlayed ? "border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
         }`}
       >
         {loading ? (
