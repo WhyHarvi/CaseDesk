@@ -33,6 +33,8 @@ Communication route/controller families and `backend/src/services/communication*
 ## Business Rules
 Outbound work is durable/idempotent through the outbox. Consent, address validation, channel permission, subject requirements, attachment status, and client policy are checked before send. Webhooks reconcile provider delivery; inbound mail is matched to tenant/client/case or retained unmatched.
 
+An authenticated-portal Chat message is durably delivered by being saved — the client's portal inbox query (`portalController.js`) reads by `channel: "Chat"` only, not by `provider`. `communicationProviderStatus().Chat.sendConfigured` (from `supabaseRealtimeReady()`) reflects only whether *live* Realtime push is wired up, not whether the message can be sent at all — the case-profile composer (`CommunicationComposer.jsx`) used to hard-block its Send button on this for Chat too, so a Realtime-config gap anywhere disabled portal messaging agency-wide from the case profile, while the client-profile composer (`ClientCommunicationCard.jsx`, which never checked this) kept working — the send-ability mismatch between the two was the actual symptom. Fixed by excluding Chat from that gate. Both composers should send `portalAudience: true` for a new Chat conversation so it's tagged `AuthenticatedPortal` and the `activePortal` precondition in `createCommunicationMessage` actually runs.
+
 ## Permissions
 Requires Communication case-tab access and record predicates. Client chat has link/policy controls. Webhooks use secrets/signatures rather than staff auth.
 

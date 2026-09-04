@@ -194,6 +194,13 @@ export default function CommunicationComposer({
       ? Math.round(Number(values.durationMinutes) * 60)
       : null,
     callDisposition: values.channel === "Call" ? values.callDisposition : null,
+    // Without this, a brand-new Chat conversation started here (no prior
+    // conversationId to inherit AuthenticatedPortal from) posts under the
+    // generic "Supabase" chat provider instead — the client's portal inbox
+    // isn't filtered by provider so they'd still see it, but it silently
+    // skips the activePortal check and reads inconsistently with the
+    // client-profile composer, which always sends this for Chat.
+    portalAudience: values.channel === "Chat" ? true : undefined,
     sendNow,
     initiateCall: false,
     idempotencyKey: idempotencyKey.current,
@@ -511,9 +518,9 @@ export default function CommunicationComposer({
                 </div>
               </div>
               <span
-                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${allowed && provider.sendConfigured ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
+                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${allowed && (provider.sendConfigured || values.channel === "Chat") ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
               >
-                {allowed && provider.sendConfigured ? "Ready" : "Record only"}
+                {allowed && (provider.sendConfigured || values.channel === "Chat") ? "Ready" : "Record only"}
               </span>
             </div>
             {values.channel !== "Chat" ? (
@@ -820,7 +827,13 @@ export default function CommunicationComposer({
                 saving ||
                 !effectiveCaseItem.client?.id ||
                 !allowed ||
-                (values.channel !== "Call" ? !provider.sendConfigured : false) ||
+                // Chat's "sendConfigured" reflects live Supabase Realtime
+                // push readiness, not whether the message can be delivered —
+                // an authenticated portal message is durably saved and the
+                // client sees it in their portal regardless of realtime
+                // status, exactly like the client-profile composer, which
+                // never gates its own send button on this at all.
+                (!["Call", "Chat"].includes(values.channel) ? !provider.sendConfigured : false) ||
                 (values.channel === "Email" &&
                   (!values.subject.trim() ||
                     subjectWords > EMAIL_SUBJECT_MAX_WORDS))
