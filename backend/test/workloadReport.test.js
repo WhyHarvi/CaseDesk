@@ -64,6 +64,11 @@ test("the team workload report's raw SQL scopes to active staff and the settled 
   assert.match(service, /"follow_ups" f/);
   assert.match(service, /"lead_follow_ups" lf/);
   assert.match(service, /"case_workflow_steps" cws/);
+  // Current deadline pressure must not retain work attached to an archived
+  // case. Case-less follow-ups remain valid workload.
+  assert.match(service, /f\."case_id" IS NULL OR EXISTS/);
+  assert.match(service, /c\.id = f\."case_id"[\s\S]*c\."archived_at" IS NULL/);
+  assert.match(service, /c\.id = cws\."case_id"[\s\S]*c\."archived_at" IS NULL/);
 });
 
 test("the workload routes expose the heartbeat to any staff member and the team report to admins or the teamWorkload capability", async () => {

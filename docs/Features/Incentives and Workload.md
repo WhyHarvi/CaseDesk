@@ -34,7 +34,7 @@ Incentive/plan/case-role routes and controllers; `backend/src/modules/workload/`
 None directly; financial events may originate in [[QuickBooks Online]].
 
 ## Business Rules
-Credits depend on plans, role shares, assignments, case stage/timeline checkpoints, and eligible financial/activity events. Study Permit milestones credit once per incentive cycle. Revenue contests use net collected fee categories explicitly marked eligible and preserve revenue-owner snapshots. Idempotent ledger/evaluation identities protect against duplicate credit. Workload zero-activity monitoring generates alerts.
+Credits depend on plans, role shares, assignments, case stage/timeline checkpoints, and eligible financial/activity events. Study Permit milestones credit once per incentive cycle. Revenue contests use net collected fee categories explicitly marked eligible and preserve revenue-owner snapshots. Idempotent ledger/evaluation identities protect against duplicate credit. Archived cases and their case-linked tasks, documents, follow-ups, appointments, and deadline totals are excluded from current workload; case-less, client-level, and lead work remain eligible. Historical productivity metrics remain historical. Workload zero-activity monitoring generates alerts.
 
 ## Permissions
 Incentives page is individually gated; plan management is admin-only. Workload and collaboration use role/team and case-assignment checks.

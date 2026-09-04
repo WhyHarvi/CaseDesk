@@ -390,6 +390,9 @@ export async function resetConsultantPassword(req, res) {
 }
 
 const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
+// Archived cases remain available as historical records, but neither the
+// case nor any work still attached to it belongs in a current workload.
+const CURRENT_WORKLOAD_CASE_WHERE = { deletedAt: null, archivedAt: null };
 // Requested/ChangesRequested mean CaseDesk is waiting on the client to act;
 // Uploaded/UnderReview mean a staff member needs to review something the
 // client already provided. Counting all four together as one "document
@@ -787,7 +790,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
       prisma.case.findMany({
         where: {
           agencyId,
-          deletedAt: null,
+          ...CURRENT_WORKLOAD_CASE_WHERE,
           status: { in: OPEN_CASE_STATUSES },
         },
         select: workloadCaseSelect,
@@ -797,7 +800,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
           agencyId,
           status: "Pending",
           isActive: true,
-          case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } },
+          case: { ...CURRENT_WORKLOAD_CASE_WHERE, status: { in: OPEN_CASE_STATUSES } },
         },
         select: {
           id: true,
@@ -821,7 +824,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
           visibility: "Client",
           OR: [
             { caseId: null },
-            { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
+            { case: { ...CURRENT_WORKLOAD_CASE_WHERE, status: { in: OPEN_CASE_STATUSES } } },
           ],
         },
         select: {
@@ -845,7 +848,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
           status: "Pending",
           OR: [
             { caseId: null },
-            { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
+            { case: { ...CURRENT_WORKLOAD_CASE_WHERE, status: { in: OPEN_CASE_STATUSES } } },
           ],
         },
         select: {
@@ -905,8 +908,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
             { caseId: null },
             // No status filter here — a scheduled appointment on a since-
             // closed case is still a real commitment on the calendar.
-            { case: { deletedAt: null } },
-            { leadId: { not: null } },
+            { case: CURRENT_WORKLOAD_CASE_WHERE },
           ],
         },
         select: {

@@ -151,6 +151,21 @@ test("admin workload shows agency consultants, assignments, and unassigned work"
   assert.match(tasksWorkspace, /\$\{caseItem\.assignedUser\.fullName\} \(case owner\)/);
 });
 
+test("archived cases and their attached work are excluded from every current workload bucket", async () => {
+  const controller = await source("../src/controllers/adminConsultantController.js");
+  const loader = controller.slice(controller.indexOf("export async function loadAgencyWorkloads"), controller.indexOf("export async function myWorkload"));
+
+  assert.match(controller, /const CURRENT_WORKLOAD_CASE_WHERE = \{ deletedAt: null, archivedAt: null \};/);
+  // Active case capacity, tasks, documents, follow-ups, and appointments all
+  // share the same non-deleted/non-archived boundary. Case-less work remains
+  // eligible through the explicit caseId:null branches.
+  assert.match(loader, /prisma\.case\.findMany\([\s\S]*\.\.\.CURRENT_WORKLOAD_CASE_WHERE/);
+  assert.match(loader, /prisma\.caseWorkflowStep\.findMany\([\s\S]*case: \{ \.\.\.CURRENT_WORKLOAD_CASE_WHERE/);
+  assert.match(loader, /prisma\.clientDocument\.findMany\([\s\S]*\{ caseId: null \},[\s\S]*case: \{ \.\.\.CURRENT_WORKLOAD_CASE_WHERE/);
+  assert.match(loader, /prisma\.followUp\.findMany\([\s\S]*\{ caseId: null \},[\s\S]*case: \{ \.\.\.CURRENT_WORKLOAD_CASE_WHERE/);
+  assert.match(loader, /prisma\.appointment\.findMany\([\s\S]*\{ caseId: null \},[\s\S]*\{ case: CURRENT_WORKLOAD_CASE_WHERE \}/);
+});
+
 test("work ownership inherits from the active case consultant before becoming unassigned", () => {
   const agencyId = "agency-1";
   const membership = (role = "consultant", isActive = true) => [{ agencyId, role, isActive }];

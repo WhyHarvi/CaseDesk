@@ -62,14 +62,24 @@ export async function getTeamWorkloadReport(req, db = prisma, now = new Date()) 
         (
           (SELECT COUNT(*)::int FROM "follow_ups" f
             WHERE f."agency_id" = ${agencyId} AND f."assigned_user_id" = u.id
-              AND f."status"::text = 'Pending' AND f."due_date" BETWEEN ${now} AND ${dueSoonAt})
+              AND f."status"::text = 'Pending' AND f."due_date" BETWEEN ${now} AND ${dueSoonAt}
+              AND (f."case_id" IS NULL OR EXISTS (
+                SELECT 1 FROM "cases" c
+                WHERE c.id = f."case_id" AND c."agency_id" = ${agencyId}
+                  AND c."deleted_at" IS NULL AND c."archived_at" IS NULL
+              )))
           + (SELECT COUNT(*)::int FROM "lead_follow_ups" lf
             WHERE lf."agency_id" = ${agencyId} AND lf."assigned_user_id" = u.id
               AND lf."status"::text = 'PENDING' AND lf."due_at" BETWEEN ${now} AND ${dueSoonAt})
           + (SELECT COUNT(*)::int FROM "case_workflow_steps" cws
             WHERE cws."agency_id" = ${agencyId} AND cws."assigned_to_id" = u.id
               AND cws."status"::text = 'Pending' AND cws."is_active" = true
-              AND cws."due_at" BETWEEN ${now} AND ${dueSoonAt})
+              AND cws."due_at" BETWEEN ${now} AND ${dueSoonAt}
+              AND EXISTS (
+                SELECT 1 FROM "cases" c
+                WHERE c.id = cws."case_id" AND c."agency_id" = ${agencyId}
+                  AND c."deleted_at" IS NULL AND c."archived_at" IS NULL
+              ))
         )::int AS "deadlinesDueSoon"
       FROM "users" u
       JOIN "agency_members" m ON m."user_id" = u.id AND m."agency_id" = ${agencyId}
