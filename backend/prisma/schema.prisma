@@ -1549,6 +1549,36 @@ model IncentiveMilestoneEvaluation {
   @@map("incentive_milestone_evaluations")
 }
 
+// A durable record that a qualifying milestone event happened, written in
+// the same transaction as the case-stage/follow-up state change itself (or,
+// where no such transaction is reachable, as the first thing done after it
+// commits). creditStudyPermitMilestone is still attempted immediately as a
+// best-effort call — this row only exists so that call has something to
+// retry from if it throws, instead of the event vanishing with nothing but
+// a log line. The hourly incentive retry worker sweeps PENDING rows through
+// creditStudyPermitMilestone, which is itself idempotent (see the unique
+// constraints on IncentiveMilestoneEvaluation), so replaying an event that
+// already credited is always safe.
+model IncentiveMilestoneEvent {
+  id            String    @id @default(uuid())
+  agencyId      String    @map("agency_id")
+  caseId        String    @map("case_id")
+  eventType     String    @map("event_type")
+  triggerSource String    @map("trigger_source")
+  triggerRef    String    @map("trigger_ref")
+  occurredAt    DateTime  @map("occurred_at")
+  actorUserId   String?   @map("actor_user_id")
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  lastError     String?   @map("last_error")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  processedAt   DateTime? @map("processed_at")
+
+  @@unique([agencyId, triggerSource, triggerRef, eventType])
+  @@index([status, createdAt])
+  @@map("incentive_milestone_events")
+}
+
 model IncentivePeriod {
   id            String   @id @default(uuid())
   agencyId      String   @map("agency_id")

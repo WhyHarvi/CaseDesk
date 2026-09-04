@@ -13,7 +13,7 @@ import { evaluateStageTriggers } from "../services/paymentScheduleService.js";
 import { evaluateCaseTimelineLegs } from "../services/incentiveTimelineService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import { logger } from "../services/logger.js";
-import { creditStudyPermitMilestone, STUDY_PERMIT_MILESTONES } from "../services/incentiveExpansionService.js";
+import { creditStudyPermitMilestone, recordPendingStudyPermitMilestoneEvent, STUDY_PERMIT_MILESTONES } from "../services/incentiveExpansionService.js";
 
 const DECISION_OUTCOMES = new Set(["APPROVED", "REFUSED"]);
 const REFUSAL_RESOLUTIONS = new Set(["NEW_CASE", "CLOSE_FILE"]);
@@ -88,7 +88,7 @@ async function requireCase(req, select = null) {
   return item;
 }
 
-async function runStageAutomations(agencyId, caseId, clientId, previousStage, nextStage, actorUserId) {
+async function runStageAutomations(agencyId, caseId, clientId, previousStage, nextStage, actorUserId, occurredAt = new Date()) {
   if (previousStage === nextStage) return;
   await evaluateStageTriggers(agencyId, caseId, previousStage, nextStage, actorUserId).catch((error) => {
     logger.warn("case.lifecycle_payment_trigger_failed", { caseId, reason: error.message });
@@ -105,7 +105,7 @@ async function runStageAutomations(agencyId, caseId, clientId, previousStage, ne
   const milestoneType = STUDY_PERMIT_MILESTONES[nextStage];
   if (milestoneType) await creditStudyPermitMilestone(agencyId, {
     caseId, eventType: milestoneType, triggerSource: "CASE_STAGE_HISTORY",
-    triggerRef: `${caseId}:${nextStage}`, occurredAt: new Date(), actorUserId,
+    triggerRef: `${caseId}:${nextStage}`, occurredAt, actorUserId,
   }).catch((error) => logger.warn("case.lifecycle_milestone_incentive_failed", { caseId, reason: error.message }));
 }
 
@@ -287,6 +287,7 @@ export async function updateCaseLifecycle(req, res) {
   const nextAction = text(req.body?.nextAction, 500) || (requestedStage === "Submitted" ? "Wait for decision" : "Review decision with client");
 
   if (requestedStage === "Submitted") {
+    const milestoneOccurredAt = new Date();
     const data = await prisma.$transaction(async (tx) => {
       const updated = await tx.case.update({
         where: { id: sourceCase.id },
@@ -303,6 +304,17 @@ export async function updateCaseLifecycle(req, res) {
             reason: `Application submitted ${submitted.raw}`,
           },
         });
+        // Queued in the same transaction as the stage change — see the
+        // matching comment in caseController.js's updateCase.
+        const milestoneType = STUDY_PERMIT_MILESTONES["Submitted"];
+        if (milestoneType) await recordPendingStudyPermitMilestoneEvent(req.auth.agencyId, {
+          caseId: sourceCase.id,
+          eventType: milestoneType,
+          triggerSource: "CASE_STAGE_HISTORY",
+          triggerRef: `${sourceCase.id}:Submitted`,
+          occurredAt: milestoneOccurredAt,
+          actorUserId: req.auth.userId,
+        }, tx);
       }
       return updated;
     });
@@ -316,7 +328,7 @@ export async function updateCaseLifecycle(req, res) {
       details: `${sourceCase.caseType} submitted on ${submitted.raw}`,
       metadata: { submittedAt: submitted.raw },
     });
-    await runStageAutomations(req.auth.agencyId, sourceCase.id, sourceCase.clientId, sourceCase.stage, "Submitted", req.auth.userId);
+    await runStageAutomations(req.auth.agencyId, sourceCase.id, sourceCase.clientId, sourceCase.stage, "Submitted", req.auth.userId, milestoneOccurredAt);
     invalidateDashboardCache(req.auth.agencyId);
     res.json({ data, lifecycle: { submittedAt: submitted.raw } });
     return;

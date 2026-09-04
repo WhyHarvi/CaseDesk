@@ -3,6 +3,7 @@ import { reportingBounds } from "../modules/leads/lead.metrics.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { computeSplits, resolveHolders } from "./incentiveCreditingService.js";
+import { logger } from "./logger.js";
 
 export const STUDY_PERMIT_MILESTONES = Object.freeze({
   "Offer Letter Application Submitted": "COLLEGE_APPLICATION_SUBMITTED",
@@ -172,6 +173,71 @@ export async function creditStudyPermitMilestone(agencyId, { caseId, eventType, 
     if (error?.code === "P2002") return { credited: false, reason: "already_credited" };
     throw error;
   }
+}
+
+// Queues a durable record that a qualifying milestone event happened, BEFORE
+// creditStudyPermitMilestone is attempted. Callers that have a transaction
+// spanning the underlying case/follow-up write (updateCase, the lifecycle
+// "Submitted" transition) pass its `tx` so the row is guaranteed to exist
+// the instant that state change commits — no window where the case has
+// moved but nothing durable records that a milestone credit is owed.
+// Callers without a reachable transaction (the generic follow-up CRUD
+// helper, which commits its update before running afterUpdate) pass the
+// default `prisma` client and accept a small gap instead of losing the
+// event outright on any crediting failure. Safe to call more than once for
+// the same real-world event — the unique constraint matches
+// IncentiveMilestoneEvaluation's own trigger key, so a duplicate call is a
+// no-op rather than a second queued retry.
+export async function recordPendingStudyPermitMilestoneEvent(agencyId, { caseId, eventType, triggerSource, triggerRef, occurredAt = new Date(), actorUserId = null }, db = prisma) {
+  try {
+    return await db.incentiveMilestoneEvent.create({
+      data: { agencyId, caseId, eventType, triggerSource, triggerRef: String(triggerRef), occurredAt, actorUserId, status: "PENDING" },
+    });
+  } catch (error) {
+    if (error?.code === "P2002") return null;
+    throw error;
+  }
+}
+
+// Runs the queued crediting attempt for one pending event and closes it out.
+// creditStudyPermitMilestone returning at all — credited, already_credited,
+// or a definitive "nothing to do" reason like no_active_rule/cycle_ineligible
+// — means it made its own idempotent decision, so the row is marked
+// PROCESSED either way. Only an actual thrown error (a transient DB/network
+// failure) leaves it PENDING for the next sweep.
+export async function processPendingStudyPermitMilestoneEvent(eventId) {
+  const event = await prisma.incentiveMilestoneEvent.findUnique({ where: { id: eventId } });
+  if (!event || event.status !== "PENDING") return null;
+  try {
+    const result = await creditStudyPermitMilestone(event.agencyId, {
+      caseId: event.caseId, eventType: event.eventType, triggerSource: event.triggerSource,
+      triggerRef: event.triggerRef, occurredAt: event.occurredAt, actorUserId: event.actorUserId,
+    });
+    await prisma.incentiveMilestoneEvent.update({
+      where: { id: event.id }, data: { status: "PROCESSED", processedAt: new Date(), lastError: null },
+    });
+    return result;
+  } catch (error) {
+    await prisma.incentiveMilestoneEvent.update({
+      where: { id: event.id }, data: { attempts: { increment: 1 }, lastError: String(error?.message || error).slice(0, 500) },
+    }).catch(() => {});
+    throw error;
+  }
+}
+
+// Hourly sweep counterpart to reconcilePendingIncentiveCredits: picks up any
+// milestone event whose immediate best-effort crediting attempt threw
+// (network blip, DB hiccup) and retries it. Oldest first, capped per run so
+// one bad backlog can't monopolize the shared retry worker.
+export async function reconcilePendingStudyPermitMilestoneEvents(limit = 100) {
+  const rows = await prisma.incentiveMilestoneEvent.findMany({
+    where: { status: "PENDING" }, orderBy: { createdAt: "asc" }, take: limit, select: { id: true, caseId: true },
+  });
+  for (const row of rows) {
+    await processPendingStudyPermitMilestoneEvent(row.id).catch((error) =>
+      logger.warn("incentive.milestone_retry_failed", { eventId: row.id, caseId: row.caseId, reason: error.message }));
+  }
+  return rows.length;
 }
 
 export async function simulateIncentivePlan(agencyId, { planId, dateFrom, dateTo, caseType, userId, caseId }) {

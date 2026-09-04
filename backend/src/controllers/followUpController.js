@@ -8,7 +8,7 @@ import { portalDataScope } from "../services/portalAccessService.js";
 import { leadFollowUpAccessWhere, leadSegmentWhere } from "../modules/leads/lead.permissions.js";
 import { reportingBounds } from "../modules/leads/lead.metrics.js";
 import { logger } from "../services/logger.js";
-import { creditStudyPermitMilestone, POST_SUBMISSION_FOLLOW_UP_TYPE } from "../services/incentiveExpansionService.js";
+import { creditStudyPermitMilestone, recordPendingStudyPermitMilestoneEvent, POST_SUBMISSION_FOLLOW_UP_TYPE } from "../services/incentiveExpansionService.js";
 
 export const FOLLOW_UP_PRIORITIES = ["High", "Medium", "Low"];
 export const FOLLOW_UP_TYPES = [
@@ -247,12 +247,29 @@ const controller = createCrudController({
         metadata: { completionOutcome: data.completionOutcome },
       });
       if (data.caseId && data.followUpType === POST_SUBMISSION_FOLLOW_UP_TYPE) {
+        const milestoneOccurredAt = data.completedAt || new Date();
+        // The generic CRUD helper (prismaCrud.js) commits this update
+        // before running afterUpdate, so there's no reachable transaction
+        // to queue this atomically with — unlike caseController/
+        // caseLifecycleController. Queuing it first, before the best-effort
+        // crediting attempt below, still shrinks the loss window from "any
+        // crediting failure loses the milestone" down to "only a failure of
+        // this queue write itself does", with the durable row giving the
+        // hourly sweep something to retry from either way.
+        await recordPendingStudyPermitMilestoneEvent(req.auth.agencyId, {
+          caseId: data.caseId,
+          eventType: "POST_SUBMISSION_FOLLOW_UP_COMPLETED",
+          triggerSource: "FOLLOW_UP_COMPLETED",
+          triggerRef: data.id,
+          occurredAt: milestoneOccurredAt,
+          actorUserId: req.auth.userId,
+        }).catch((error) => logger.warn("follow_up.milestone_queue_failed", { followUpId: data.id, reason: error.message }));
         await creditStudyPermitMilestone(req.auth.agencyId, {
           caseId: data.caseId,
           eventType: "POST_SUBMISSION_FOLLOW_UP_COMPLETED",
           triggerSource: "FOLLOW_UP_COMPLETED",
           triggerRef: data.id,
-          occurredAt: data.completedAt || new Date(),
+          occurredAt: milestoneOccurredAt,
           actorUserId: req.auth.userId,
         }).catch((error) => logger.warn("follow_up.milestone_incentive_failed", { followUpId: data.id, reason: error.message }));
       }

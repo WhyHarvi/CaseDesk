@@ -17,7 +17,7 @@ import { offerWaitlistOpening } from "../services/bookingWaitlistService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import { notifyCaseAssignment } from "../services/caseAssignmentNotificationService.js";
 import { formatStudyIntakeMonth, isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake, studyIntakeKey } from "../utils/studyIntake.js";
-import { creditStudyPermitMilestone, STUDY_PERMIT_MILESTONES } from "../services/incentiveExpansionService.js";
+import { creditStudyPermitMilestone, recordPendingStudyPermitMilestoneEvent, STUDY_PERMIT_MILESTONES } from "../services/incentiveExpansionService.js";
 
 const include = {
   client: {
@@ -465,6 +465,7 @@ export async function updateCase(req, res) {
   if (req.auth.role === "consultant" && payload.assignedUserId !== undefined) payload.assignedUserId = req.auth.userId;
   await validateCaseAssignee(req, payload.assignedUserId);
 
+  const milestoneOccurredAt = new Date();
   const result = await prisma.$transaction(async (tx) => {
     const data = await tx.case.update({
       where: { id: req.params.id },
@@ -482,6 +483,18 @@ export async function updateCase(req, res) {
           changedById: req.auth.userId,
         },
       });
+      // Queued in the same transaction as the stage change so the stage
+      // transition can never commit without a durable, retryable record
+      // that a milestone credit is owed — see incentiveExpansionService.js.
+      const milestoneType = STUDY_PERMIT_MILESTONES[payload.stage];
+      if (milestoneType) await recordPendingStudyPermitMilestoneEvent(req.user.agencyId, {
+        caseId: data.id,
+        eventType: milestoneType,
+        triggerSource: "CASE_STAGE_HISTORY",
+        triggerRef: `${data.id}:${payload.stage}`,
+        occurredAt: milestoneOccurredAt,
+        actorUserId: req.auth.userId,
+      }, tx);
     }
 
     const caseTypeChanged = payload.caseType && payload.caseType !== existing.caseType;
@@ -555,7 +568,7 @@ export async function updateCase(req, res) {
       eventType: milestoneType,
       triggerSource: "CASE_STAGE_HISTORY",
       triggerRef: `${result.data.id}:${payload.stage}`,
-      occurredAt: new Date(),
+      occurredAt: milestoneOccurredAt,
       actorUserId: req.auth.userId,
     }).catch((error) => logger.warn("case.milestone_incentive_failed", { caseId: result.data.id, reason: error.message }));
   }

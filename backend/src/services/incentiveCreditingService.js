@@ -722,7 +722,15 @@ export async function reconcilePendingIncentiveCredits() {
 
 export function startIncentiveRetryWorker() {
   if (retryTimer) return;
-  const run = () => void reconcilePendingIncentiveCredits().catch((error) => logger.warn("incentive.retry_sweep_failed", { reason: error.message }));
+  const run = () => {
+    void reconcilePendingIncentiveCredits().catch((error) => logger.warn("incentive.retry_sweep_failed", { reason: error.message }));
+    // Milestone events live in incentiveExpansionService.js, which imports
+    // from this module — a static import here would be circular, so this
+    // uses the same dynamic-import convention as creditCaseInvoiceCollection.
+    void import("./incentiveExpansionService.js").then(({ reconcilePendingStudyPermitMilestoneEvents }) =>
+      reconcilePendingStudyPermitMilestoneEvents()
+    ).catch((error) => logger.warn("incentive.milestone_retry_sweep_failed", { reason: error.message }));
+  };
   run();
   // Pure drift reconciliation, not the primary crediting path: every real
   // payment/webhook trigger (quickbooksWebhookService.js, caseInvoiceService.js
