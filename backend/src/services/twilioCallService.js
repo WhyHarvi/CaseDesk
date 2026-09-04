@@ -912,7 +912,32 @@ async function notifyTwilioCall(session, isNew, becameMissed) {
   const shouldNotify = (isNew && session.direction === "INBOUND") || becameMissed;
   if (!shouldNotify || session.direction !== "INBOUND") return;
   if (!["RINGING", "ANSWERED", "COMPLETED", "MISSED", "FAILED"].includes(session.status)) return;
-  const recipientIds = [session.handledByUserId].filter(Boolean);
+  // A STAFF/INTERNAL line can ring the whole team, while FRONTDESK and
+  // DIRECT lines ring smaller groups. For a missed call, notify the people
+  // represented by the dispatch rows instead of collapsing the alert to the
+  // generic admin/frontdesk fallback. Those rows are the durable record of
+  // which browser softphones Twilio actually attempted to ring.
+  let recipientIds = [];
+  if (session.status === "MISSED") {
+    const dispatches = await prisma.callRingDispatch.findMany({
+      where: { agencyId: session.agencyId, parentCallSid: session.providerCallId },
+      select: { identity: true },
+    });
+    const dispatchedUserIds = [...new Set(dispatches.map((row) => identityFromClient(row.identity)).filter(Boolean))];
+    if (dispatchedUserIds.length) {
+      const rungUsers = await prisma.user.findMany({
+        where: {
+          id: { in: dispatchedUserIds },
+          agencyId: session.agencyId,
+          status: "active",
+          memberships: { some: { agencyId: session.agencyId, isActive: true, role: staffRoleWhere } },
+        },
+        select: { id: true },
+      });
+      recipientIds = rungUsers.map((user) => user.id);
+    }
+  }
+  if (!recipientIds.length && session.handledByUserId) recipientIds.push(session.handledByUserId);
   if (!recipientIds.length) {
     const triageUsers = await prisma.user.findMany({
       where: { agencyId: session.agencyId, status: "active", memberships: { some: { agencyId: session.agencyId, isActive: true, role: { in: ["admin", "frontdesk"] } } } },

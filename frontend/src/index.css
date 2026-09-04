@@ -265,6 +265,198 @@ input {
   to { background-position: -200% center; }
 }
 
+/* Nova desktop pet: position is transform-only, so roaming never reflows CRM content. */
+.nova-pet {
+  transition: transform 4.2s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.nova-pet.is-dragging {
+  transition: none;
+}
+
+.nova-pet[data-activity="idle"],
+.nova-pet[data-activity="yarn"],
+.nova-pet[data-activity="stretch"],
+.nova-pet[data-activity="nap"],
+.nova-pet[data-activity="nod"],
+.nova-pet[data-activity="dance"],
+.nova-pet[data-activity="wave"],
+.nova-pet[data-activity="headstand"],
+.nova-pet[data-activity="coin"] {
+  transition-duration: 180ms;
+}
+
+.nova-pet[data-activity="walk"] .nova-pet-body {
+  animation: nova-pet-walk 0.48s ease-in-out infinite alternate;
+}
+
+.nova-pet[data-activity="walk"] .nova-pet-leg-front,
+.nova-pet[data-activity="walk"] .nova-pet-leg-back {
+  transform-box: fill-box;
+  transform-origin: center top;
+  animation: nova-pet-step 0.48s ease-in-out infinite alternate;
+}
+
+.nova-pet[data-activity="walk"] .nova-pet-leg-back {
+  animation-delay: -0.24s;
+}
+
+.nova-pet .nova-pet-tail {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: nova-pet-tail 1.35s ease-in-out infinite alternate;
+}
+
+.nova-pet[data-activity="yarn"] .nova-pet-head {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: nova-pet-watch-yarn 0.7s ease-in-out infinite alternate;
+}
+
+.nova-pet-yarn {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: nova-pet-yarn-roll 1.4s ease-in-out infinite alternate;
+}
+
+.nova-pet[data-activity="nap"] .nova-pet-body {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: nova-pet-breathe 1.8s ease-in-out infinite alternate;
+}
+
+.nova-pet-dream {
+  animation: nova-pet-dream 1.4s ease-in-out infinite;
+}
+
+.nova-pet[data-activity="stretch"] .nova-pet-body {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: nova-pet-stretch 1.25s ease-in-out 2 alternate;
+}
+
+.nova-pet[data-activity="wave"] .nova-pet-leg-front {
+  transform-box: fill-box;
+  transform-origin: top center;
+  animation: nova-pet-wave 0.6s ease-in-out infinite alternate;
+}
+
+.nova-pet[data-activity="nod"] .nova-pet-head {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: nova-pet-nod 0.6s ease-in-out infinite alternate;
+}
+
+.nova-pet[data-activity="dance"] .nova-pet-body {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: nova-pet-dance 0.9s ease-in-out infinite;
+}
+
+.nova-pet[data-activity="dance"] .nova-pet-tail {
+  animation-duration: 0.4s;
+}
+
+.nova-pet.is-dragging[data-activity="headstand"] .nova-pet-body,
+.nova-pet[data-activity="headstand"] .nova-pet-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: nova-pet-headstand 0.5s ease-in-out infinite;
+}
+
+.nova-pet[data-activity="coin"] .nova-pet-leg-front {
+  transform-box: fill-box;
+  transform-origin: top center;
+  animation: nova-pet-wave 0.35s ease-in-out 4 alternate;
+}
+
+.nova-pet-coin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: nova-pet-coin-spin 0.6s linear infinite;
+}
+
+.nova-pet.is-dragging .nova-pet-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(3deg) scale(1.04);
+}
+
+.nova-pet.is-dragging .nova-pet-bubble,
+.nova-pet:focus-within .nova-pet-bubble,
+.nova-pet:hover .nova-pet-bubble {
+  opacity: 1;
+}
+
+@keyframes nova-pet-walk {
+  from { transform: translateY(0) rotate(-0.8deg); }
+  to { transform: translateY(-3px) rotate(0.8deg); }
+}
+
+@keyframes nova-pet-step {
+  from { transform: rotate(-7deg) translateY(0); }
+  to { transform: rotate(8deg) translateY(-2px); }
+}
+
+@keyframes nova-pet-tail {
+  from { transform: rotate(-7deg); }
+  to { transform: rotate(9deg); }
+}
+
+@keyframes nova-pet-watch-yarn {
+  from { transform: rotate(-2deg); }
+  to { transform: rotate(7deg); }
+}
+
+@keyframes nova-pet-yarn-roll {
+  from { transform: translateX(-3px) rotate(-12deg); }
+  to { transform: translateX(5px) rotate(16deg); }
+}
+
+@keyframes nova-pet-breathe {
+  from { transform: scaleY(0.98); }
+  to { transform: scaleY(1.025); }
+}
+
+@keyframes nova-pet-dream {
+  0% { opacity: 0; transform: translateY(4px) scale(0.9); }
+  35%, 70% { opacity: 0.8; }
+  100% { opacity: 0; transform: translateY(-5px) scale(1.05); }
+}
+
+@keyframes nova-pet-stretch {
+  from { transform: scaleX(1) scaleY(1); }
+  to { transform: translateX(5px) scaleX(1.08) scaleY(0.9); }
+}
+
+@keyframes nova-pet-wave {
+  from { transform: rotate(-8deg); }
+  to { transform: rotate(28deg); }
+}
+
+@keyframes nova-pet-nod {
+  from { transform: translateY(0) rotate(-3deg); }
+  to { transform: translateY(3px) rotate(5deg); }
+}
+
+@keyframes nova-pet-dance {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  25% { transform: translateY(-4px) rotate(3deg); }
+  50% { transform: translateY(0) rotate(-3deg) scaleX(1.03); }
+  75% { transform: translateY(-4px) rotate(4deg); }
+}
+
+@keyframes nova-pet-headstand {
+  0%, 100% { transform: rotate(178deg); }
+  50% { transform: rotate(182deg); }
+}
+
+@keyframes nova-pet-coin-spin {
+  0%, 100% { transform: scaleX(1) translateY(0); }
+  50% { transform: scaleX(0.2) translateY(-4px); }
+}
+
 /* ---------- Call center dialpad ---------- */
 @keyframes dialpop {
   from { transform: scale(1.045); filter: brightness(1.25); }

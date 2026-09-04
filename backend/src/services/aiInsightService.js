@@ -961,6 +961,12 @@ export async function resolveCaseDeskAIInsight(req, messages, {
 // above, but only surfaces a route when there's something worth mentioning.
 // A quiet page (nothing overdue, nothing outstanding) returns null rather
 // than a hollow "0 things" banner.
+//
+// Each proactiveXxx function below returns { message, severity, action,
+// idPart } — plain text, no markdown — or null. NOVA_LINKS (markdown-link
+// strings interpolated into the Q&A answers above) is deliberately left
+// alone; PROACTIVE_ACTIONS is a separate, structured {label, href} table
+// used only here, so this doesn't risk the ~15 other NOVA_LINKS call sites.
 const PROACTIVE_ROUTES = Object.freeze([
   { test: (path) => /^\/app\/follow-ups/.test(path) || /^\/app\/cases/.test(path), kind: "followUpsOverdue" },
   { test: (path) => /^\/app\/documents/.test(path), kind: "documentsOutstanding" },
@@ -968,6 +974,26 @@ const PROACTIVE_ROUTES = Object.freeze([
   { test: (path) => /^\/leads(?:$|\/(?!review))/.test(path), kind: "leadsPersonalOpen" },
   { test: (path) => /^\/app\/calendar/.test(path), kind: "appointmentsToday" },
 ]);
+
+// Maps the internal route "kind" above to the public ProactiveNovaInsight
+// kind/persona vocabulary. Persona is presentation-only — it never changes
+// which resolver ran or what data it read, only how Nova labels herself
+// while showing it.
+const PAGE_INSIGHT_META = Object.freeze({
+  followUpsOverdue: { kind: "followups", persona: "Nova" },
+  documentsOutstanding: { kind: "documents", persona: "Document reviewer" },
+  paymentsOutstanding: { kind: "payments", persona: "Collections assistant" },
+  leadsPersonalOpen: { kind: "leads", persona: "Lead analyst" },
+  appointmentsToday: { kind: "calendar", persona: "Nova" },
+});
+
+const PROACTIVE_ACTIONS = Object.freeze({
+  followUps: { label: "Open Follow-ups", href: "/app/follow-ups" },
+  documents: { label: "Open Documents", href: "/app/documents" },
+  payments: { label: "Open Payments", href: "/app/payments" },
+  leads: { label: "Open Leads", href: "/leads" },
+  calendar: { label: "Open Calendar", href: "/app/calendar" },
+});
 
 async function proactiveFollowUpsOverdue(req, db, now, personal) {
   if (!hasPortalPageAccess(req, "followUps") && !hasPortalPageAccess(req, "cases")) return null;
@@ -987,7 +1013,7 @@ async function proactiveFollowUpsOverdue(req, db, now, personal) {
   const overdue = caseOverdue + leadOverdue;
   if (!overdue) return null;
   const scope = personal ? "You have" : "The workspace has";
-  return `${scope} ${countLabel(overdue, "overdue follow-up")} right now.\n\n${NOVA_LINKS.followUps}`;
+  return { message: `${scope} ${countLabel(overdue, "overdue follow-up")} right now.`, severity: "attention", action: PROACTIVE_ACTIONS.followUps, idPart: `${overdue}` };
 }
 
 async function proactiveDocumentsOutstanding(req, db) {
@@ -997,7 +1023,12 @@ async function proactiveDocumentsOutstanding(req, db) {
     where: { agencyId: req.auth.agencyId, AND: [access], status: { in: DOCUMENT_OUTSTANDING_STATUSES } },
   });
   if (!outstanding) return null;
-  return `There ${outstanding === 1 ? "is" : "are"} ${countLabel(outstanding, "outstanding document")} waiting across the cases you can access.\n\n${NOVA_LINKS.documents}`;
+  return {
+    message: `There ${outstanding === 1 ? "is" : "are"} ${countLabel(outstanding, "outstanding document")} waiting across the cases you can access.`,
+    severity: "attention",
+    action: PROACTIVE_ACTIONS.documents,
+    idPart: `${outstanding}`,
+  };
 }
 
 async function proactivePaymentsOutstanding(req, db, paymentSummary) {
@@ -1007,7 +1038,8 @@ async function proactivePaymentsOutstanding(req, db, paymentSummary) {
     db.agency.findUnique({ where: { id: req.auth.agencyId }, select: { defaultCurrency: true } }),
   ]);
   if (!summary.outstandingBalance) return null;
-  return `There's **${money(summary.outstandingBalance, agency?.defaultCurrency || "CAD")}** outstanding right now.\n\n${NOVA_LINKS.payments}`;
+  const amount = money(summary.outstandingBalance, agency?.defaultCurrency || "CAD");
+  return { message: `There's ${amount} outstanding right now.`, severity: "attention", action: PROACTIVE_ACTIONS.payments, idPart: amount };
 }
 
 async function proactiveLeadsPersonalOpen(req, db, personal) {
@@ -1025,7 +1057,7 @@ async function proactiveLeadsPersonalOpen(req, db, personal) {
     },
   });
   if (!open) return null;
-  return `You have ${countLabel(open, "open lead")} assigned to you.\n\n${NOVA_LINKS.leads}`;
+  return { message: `You have ${countLabel(open, "open lead")} assigned to you.`, severity: "attention", action: PROACTIVE_ACTIONS.leads, idPart: `${open}` };
 }
 
 async function proactiveAppointmentsToday(req, db, now, personal) {
@@ -1042,27 +1074,179 @@ async function proactiveAppointmentsToday(req, db, now, personal) {
     },
   });
   if (!count) return null;
-  return `${personal ? "You have" : "There are"} ${countLabel(count, "appointment")} today.\n\n${NOVA_LINKS.calendar}`;
+  return { message: `${personal ? "You have" : "There are"} ${countLabel(count, "appointment")} today.`, severity: "neutral", action: PROACTIVE_ACTIONS.calendar, idPart: `${count}` };
+}
+
+// Entity-scoped counterpart to the page-level resolvers above: instead of
+// "documents in general", this asks "what does THIS client/case actually
+// need". Permission is verified first — the client/case must resolve
+// inside this request's own tenant + role/assignment access scope — before
+// any of the priority-chain checks below ever run, so an insight can never
+// leak a fact about a record the caller couldn't otherwise open.
+//
+// The chain is checked in order and stops at the first real signal; a
+// quiet entity (nothing overdue, nothing missing, nothing owed) still
+// returns a positive insight rather than null, since the point of entity
+// scope is "always know something real about this client/case", not "stay
+// silent unless there's a problem" like the page-level routes above.
+const ENTITY_PERSONAS = Object.freeze({ client: "Client assistant", case: "Case assistant" });
+
+async function entityOverdueFollowUp(req, db, timezone, now, caseIds, entityNoun) {
+  if (!caseIds.length) return null;
+  if (!hasPortalPageAccess(req, "followUps") && !hasPortalPageAccess(req, "cases")) return null;
+  const { todayStart } = reportingBounds(now, timezone);
+  const overdue = await db.followUp.count({
+    where: { agencyId: req.auth.agencyId, caseId: { in: caseIds }, status: "Pending", dueDate: { lt: todayStart } },
+  });
+  if (!overdue) return null;
+  return { message: `${countLabel(overdue, "overdue follow-up")} on this ${entityNoun}.`, severity: "attention", idPart: `followups:${overdue}` };
+}
+
+async function entityDocumentsNeedingAction(req, db, scopeWhere, entityNoun) {
+  if (!hasPortalPageAccess(req, "documents")) return null;
+  const count = await db.clientDocument.count({
+    where: { agencyId: req.auth.agencyId, ...scopeWhere, status: { in: ["Requested", "ChangesRequested"] } },
+  });
+  if (!count) return null;
+  return { message: `${countLabel(count, "document")} missing or needing changes on this ${entityNoun}.`, severity: "attention", idPart: `documents:${count}` };
+}
+
+async function entityPaymentOutstanding(req, db, scopeWhere, now, entityNoun) {
+  if (!hasPortalPageAccess(req, "payments") || !hasPortalCapability(req, "financialData")) return null;
+  const invoices = await db.caseInvoice.findMany({
+    where: { agencyId: req.auth.agencyId, ...scopeWhere, balance: { gt: 0 }, status: { notIn: ["Void", "Voided"] } },
+    select: { balance: true, dueDate: true },
+  });
+  if (!invoices.length) return null;
+  const agency = await db.agency.findUnique({ where: { id: req.auth.agencyId }, select: { defaultCurrency: true } });
+  const total = invoices.reduce((sum, row) => sum + Number(row.balance), 0);
+  const overdue = invoices.some((row) => row.dueDate && row.dueDate < now);
+  const amount = money(total, agency?.defaultCurrency || "CAD");
+  return { message: `${amount} ${overdue ? "overdue" : "outstanding"} on this ${entityNoun}.`, severity: overdue ? "urgent" : "attention", idPart: `payments:${amount}:${overdue}` };
+}
+
+async function entityIncompleteForms(req, db, scopeWhere, entityNoun) {
+  if (!hasPortalPageAccess(req, "cases")) return null;
+  const count = await db.questionnaireAssignment.count({
+    where: { agencyId: req.auth.agencyId, ...scopeWhere, sharing: "Shared", locked: false, status: { not: "Submitted" } },
+  });
+  if (!count) return null;
+  return { message: `${countLabel(count, "form")} still incomplete on this ${entityNoun}.`, severity: "attention", idPart: `forms:${count}` };
+}
+
+async function entityUpcomingAppointment(req, db, scopeWhere, now, entityNoun) {
+  if (!hasPortalPageAccess(req, "calendar")) return null;
+  const appointment = await db.appointment.findFirst({
+    where: { agencyId: req.auth.agencyId, ...scopeWhere, status: "Scheduled", startsAt: { gte: now } },
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true },
+  });
+  if (!appointment) return null;
+  return { message: `This ${entityNoun} has an upcoming appointment.`, severity: "neutral", idPart: `calendar:${appointment.startsAt.toISOString()}` };
+}
+
+async function entityWorkflowBlocker(req, db, now, caseIds, entityNoun) {
+  if (!caseIds.length) return null;
+  if (!hasPortalPageAccess(req, "cases")) return null;
+  const blocker = await db.caseWorkflowStep.findFirst({
+    where: { agencyId: req.auth.agencyId, caseId: { in: caseIds }, isActive: true, status: "Pending", dueAt: { lt: now } },
+    orderBy: { dueAt: "asc" },
+    select: { title: true },
+  });
+  if (!blocker) return null;
+  return { message: `"${blocker.title}" is overdue on this ${entityNoun}'s workflow.`, severity: "attention", idPart: `workflow:${blocker.title}` };
+}
+
+async function resolveEntityNovaInsight(req, { entityType, entityId, db, now }) {
+  if (entityType !== "client" && entityType !== "case") return null;
+  const id = String(entityId || "").trim().slice(0, 100);
+  if (!id) return null;
+
+  let clientId;
+  let caseIds;
+  if (entityType === "client") {
+    const client = await db.client.findFirst({ where: { id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) }, select: { id: true } });
+    if (!client) return null;
+    clientId = client.id;
+    const cases = await db.case.findMany({ where: { agencyId: req.auth.agencyId, clientId, deletedAt: null, ...caseAccessWhere(req) }, select: { id: true } });
+    caseIds = cases.map((row) => row.id);
+  } else {
+    const caseItem = await db.case.findFirst({ where: { id, agencyId: req.auth.agencyId, deletedAt: null, ...caseAccessWhere(req) }, select: { id: true, clientId: true } });
+    if (!caseItem) return null;
+    clientId = caseItem.clientId;
+    caseIds = [caseItem.id];
+  }
+
+  const entityNoun = entityType;
+  // A case-entity view scopes every check to just that one case — mixing in
+  // a client's other, unrelated cases would misrepresent what's actually
+  // happening on this one. A client-entity view intentionally stays
+  // client-wide across every case they have.
+  const scopeWhere = entityType === "case" ? { caseId: caseIds[0] } : { clientId };
+  const agency = await db.agency.findUnique({ where: { id: req.auth.agencyId }, select: { timezone: true } });
+  const timezone = agency?.timezone || "America/Toronto";
+
+  const checks = [
+    () => entityOverdueFollowUp(req, db, timezone, now, caseIds, entityNoun),
+    () => entityDocumentsNeedingAction(req, db, scopeWhere, entityNoun),
+    () => entityPaymentOutstanding(req, db, scopeWhere, now, entityNoun),
+    () => entityIncompleteForms(req, db, scopeWhere, entityNoun),
+    () => entityUpcomingAppointment(req, db, scopeWhere, now, entityNoun),
+    () => entityWorkflowBlocker(req, db, now, caseIds, entityNoun),
+  ];
+  let fact = null;
+  for (const check of checks) {
+    fact = await check();
+    if (fact) break;
+  }
+  if (!fact) fact = { message: `Nothing needs attention on this ${entityNoun} right now.`, severity: "success", idPart: "clear" };
+
+  return {
+    id: `entity:${entityType}:${id}:${fact.idPart}`,
+    scope: "entity",
+    kind: entityType,
+    persona: ENTITY_PERSONAS[entityType],
+    message: fact.message,
+    severity: fact.severity,
+    entity: { type: entityType, id },
+    action: { label: entityType === "client" ? "Open Client" : "Open Case", href: `/app/${entityType}s/${id}` },
+    generatedAt: now.toISOString(),
+  };
 }
 
 export async function resolveProactiveNovaInsight(req, {
   currentPath = "",
+  entityType = "",
+  entityId = "",
   db = prisma,
   now = new Date(),
   paymentSummary = getPaymentsSummary,
 } = {}) {
   if (!req.auth) return null;
+  if (entityType && entityId) return resolveEntityNovaInsight(req, { entityType, entityId, db, now });
+
   const route = PROACTIVE_ROUTES.find((entry) => entry.test(String(currentPath || "")));
   if (!route) return null;
   const personal = req.auth.role !== "admin";
 
-  const insight = await {
+  const result = await {
     followUpsOverdue: () => proactiveFollowUpsOverdue(req, db, now, personal),
     documentsOutstanding: () => proactiveDocumentsOutstanding(req, db),
     paymentsOutstanding: () => proactivePaymentsOutstanding(req, db, paymentSummary),
     leadsPersonalOpen: () => proactiveLeadsPersonalOpen(req, db, personal),
     appointmentsToday: () => proactiveAppointmentsToday(req, db, now, personal),
   }[route.kind]();
+  if (!result) return null;
 
-  return insight ? { insight } : null;
+  const meta = PAGE_INSIGHT_META[route.kind];
+  return {
+    id: `page:${meta.kind}:${result.idPart}`,
+    scope: "page",
+    kind: meta.kind,
+    persona: meta.persona,
+    message: result.message,
+    severity: result.severity,
+    action: result.action,
+    generatedAt: now.toISOString(),
+  };
 }

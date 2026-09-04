@@ -62,10 +62,14 @@ export async function chatWithCaseDeskAI(req, res) {
   });
 }
 
+const ENTITY_TYPES = new Set(["client", "case"]);
+
 export async function getCaseDeskProactiveInsight(req, res) {
   const currentPath = typeof req.query?.path === "string" ? req.query.path.slice(0, 300) : "";
-  const insight = await resolveProactiveNovaInsight(req, { currentPath });
-  res.json({ success: true, insight: insight?.insight || null });
+  const entityType = ENTITY_TYPES.has(req.query?.entityType) ? req.query.entityType : "";
+  const entityId = entityType && typeof req.query?.entityId === "string" ? req.query.entityId.slice(0, 100) : "";
+  const insight = await resolveProactiveNovaInsight(req, { currentPath, entityType, entityId });
+  res.json({ success: true, insight: insight || null });
 }
 
 export async function getCaseDeskAIStatus(_req, res) {

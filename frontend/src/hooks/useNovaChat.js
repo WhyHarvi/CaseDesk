@@ -5,7 +5,7 @@ function welcomeMessage() {
   return {
     id: "nova-welcome",
     direction: "Inbound",
-    bodyText: "Hi, I’m Nova. Tell me what you’re trying to do and I’ll point you to the right place — or ask me to draft or rewrite a message, email, or note.",
+    bodyText: "Hi, I’m Nova. How can I help you? I can guide you through CaseDesk, find the right place, or help draft and rewrite messages, emails, and notes.",
     occurredAt: new Date().toISOString(),
     systemOnly: true,
   };

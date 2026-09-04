@@ -11,6 +11,7 @@ import {
 import { captureSupportFailure } from "./supportCapture";
 import { requestCaseLifecycleInput } from "./caseLifecycleGate";
 import { requestRequiredCaseTeam } from "./caseRequiredTeamGate";
+import { celebrateNova } from "../utils/novaCelebrate";
 
 const transport = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:5001/api",
@@ -172,6 +173,25 @@ async function mutateCaseCreate(url, data, config) {
   }, config);
 }
 
+// One funnel for every mutation in the app, regardless of which component
+// issued it — the reliable place to notice "a client was just created"
+// without hunting down and instrumenting every form that can create one
+// (there are at least two). Only recognizes successful mutations that
+// already reached this point without throwing.
+function celebrationForMutation(method, url, lifecycleTarget, response) {
+  const path = String(url || "");
+  if (method === "post" && path === "/clients") return "client_created";
+  if (method === "post" && /^\/leads\/[^/]+\/convert$/.test(path)) return "lead_converted";
+  if (method === "post" && path === "/appointments") return "appointment_booked";
+  if (method === "post" && (/^\/cases\/[^/]+\/invoices\/[^/]+\/manual-payment$/.test(path) || /^\/booking\/appointments\/[^/]+\/manual-payment$/.test(path))) return "payment_received";
+  // lifecycleResponse.data.lifecycle only exists on an actual transition
+  // (mutateCaseLifecycle's no-op branch returns a plain case-patch response
+  // instead) — this keeps re-saving an already-submitted case from
+  // celebrating again on every unrelated edit.
+  if (lifecycleTarget?.stage === "Submitted" && response?.data?.lifecycle) return "case_submitted";
+  return null;
+}
+
 async function mutate(method, url, data, config) {
   const scope = getApiCacheScope();
   const lifecycleTarget = caseLifecycleTarget(method, url, data);
@@ -184,6 +204,8 @@ async function mutate(method, url, data, config) {
         ? await transport.delete(url, config)
         : await transport[method](url, data, config);
   invalidateApiCache(url, scope);
+  const celebration = celebrationForMutation(method, url, lifecycleTarget, response);
+  if (celebration) celebrateNova(celebration);
   return response;
 }
 

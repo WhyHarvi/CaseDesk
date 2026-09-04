@@ -26,8 +26,9 @@ import { useChatAttachmentUrls } from "../../hooks/useChatAttachmentUrls";
 import { useThreadAvatarUrls } from "../../hooks/useThreadAvatarUrls";
 import { playReceivedSound, playSentSound } from "../../utils/chatSounds";
 import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from "../../hooks/useNovaChat";
-import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator } from "./NovaChatPresentation";
+import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator, useNovaProactiveInsight } from "./NovaChatPresentation";
 import SupportDeskPanel from "./SupportDeskPanel";
+import NovaCatMascot from "./NovaCatMascot";
 
 const RECONCILE_POLL_MS = 5 * 60_000;
 const FALLBACK_POLL_MS = 60_000;
@@ -114,6 +115,7 @@ export default function FloatingChatWidget() {
   const navigate = useNavigate();
   const { appUser } = useAuth();
   const myUserId = appUser?.id;
+  const novaFirstName = appUser?.firstName || appUser?.fullName?.split(" ")[0] || "";
   const reduceMotion = useReducedMotion();
   const { sidebarCounts, acknowledgeDestination } = useNotifications();
   const isChatsRoute = location.pathname === "/app/chats"; // the full page already polls/plays sound itself
@@ -175,6 +177,13 @@ export default function FloatingChatWidget() {
       preview: latest?.bodyText || "CaseDesk AI",
     };
   }, [novaMessages]);
+  // Only fetched while the panel it's actually shown in is visible — the
+  // floating cat (NovaCatMascot) fetches its own copy of this independently
+  // and is never mounted at the same time (it's hidden whenever the panel
+  // is open), so gating this avoids a redundant duplicate request on every
+  // navigation while the panel stays closed, the common case.
+  const novaPanelVisible = view === "thread" && Boolean(selectedId) && activeDetail?.kind === "ai" && novaMessages.length === 1;
+  const novaInsight = useNovaProactiveInsight(location.pathname, { enabled: novaPanelVisible });
   const supportItem = useMemo(() => ({
     kind: "support",
     id: "help",
@@ -584,6 +593,13 @@ export default function FloatingChatWidget() {
     });
   }
 
+  function openNovaFromMascot() {
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    setIncomingPreview(null);
+    setOpen(true);
+    selectConversation(novaItem);
+  }
+
   function expandToFullPage() {
     setOpen(false);
     if (!selectedId) {
@@ -616,6 +632,7 @@ export default function FloatingChatWidget() {
 
   return createPortal(
     <div className={`fixed bottom-6 z-[410] flex flex-col items-end transition-[right] duration-300 ${phoneFloat.open ? "right-24 lg:right-[26rem]" : phoneFloat.active ? "right-24 lg:right-[21rem]" : "right-24"}`} data-floating-chat>
+      {!open && !incomingPreview ? <NovaCatMascot key={location.pathname} onActivate={openNovaFromMascot} firstName={novaFirstName} currentPath={location.pathname} /> : null}
       <AnimatePresence>
         {open ? (
           <motion.div
@@ -738,8 +755,8 @@ export default function FloatingChatWidget() {
             {view === "thread" && selectedId && activeDetail?.kind !== "support" ? (
               <div className="shrink-0 border-t border-slate-100 bg-white p-2.5">
                 {(activeDetail?.kind === "ai" ? novaError : error) ? <p className="mb-2 rounded-xl bg-rose-50 px-3 py-1.5 text-[11px] text-rose-700">{activeDetail?.kind === "ai" ? novaError : error}</p> : null}
-                {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaProactiveInsight currentPath={location.pathname} compact /> : null}
-                {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaSuggestions onSelect={setDraft} currentPath={location.pathname} compact /> : null}
+                {novaPanelVisible ? <NovaProactiveInsight insight={novaInsight} compact /> : null}
+                {novaPanelVisible ? <NovaSuggestions onSelect={setDraft} currentPath={location.pathname} persona={novaInsight?.persona} compact /> : null}
                 <ChatComposer
                   value={draft}
                   onChange={setDraft}

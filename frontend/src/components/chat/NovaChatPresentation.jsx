@@ -63,6 +63,18 @@ export function novaSuggestionsForPath(path) {
   return PATH_SUGGESTIONS.find((entry) => entry.test(String(path || "")))?.suggestions || DEFAULT_SUGGESTIONS;
 }
 
+// One of the four things a persona is allowed to change (bubble wording,
+// pose/icon, and this) — never which actions Nova can actually take. A
+// persona with no entry here (the page-level default, "Nova") just falls
+// through to the ordinary path-based suggestions below, unchanged.
+const PERSONA_SUGGESTIONS = Object.freeze({
+  "Client assistant": "What does this client need from me right now?",
+  "Case assistant": "What does this case need from me right now?",
+  "Document reviewer": "Which documents still need review?",
+  "Lead analyst": "Which of my leads need follow-up?",
+  "Collections assistant": "Which clients have outstanding balances?",
+});
+
 function inlineContent(text) {
   const tokens = String(text || "").split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]\n]+\]\(\/[A-Za-z0-9?&=_/.:%-]+\)|\/(?:app(?:\/[A-Za-z0-9?&=_/.:%-]+)?|leads(?:\/[A-Za-z0-9?&=_/.:%-]*)?|calls(?:\/[A-Za-z0-9?&=_/.:%-]*)?|lead-(?:dashboard|reports)(?:\/[A-Za-z0-9?&=_/.:%-]*)?))/g);
   return tokens.map((token, index) => {
@@ -138,31 +150,59 @@ export function NovaThinkingIndicator() {
   );
 }
 
-// An unprompted, verified opening line shown before the user asks anything —
-// e.g. "You have 3 overdue follow-ups" on the Follow-ups page. Backed by the
-// same live, access-scoped counts as a direct question (never a guess), and
-// silent (renders nothing) on a page with nothing worth flagging, so it
-// never becomes noise the user learns to ignore.
-export function NovaProactiveInsight({ currentPath, compact = false }) {
-  const [insight, setInsight] = useState(null);
-  const [dismissed, setDismissed] = useState(false);
+// A client/case profile route carries its own id explicitly to the backend
+// (entityType + entityId) rather than the backend re-parsing the path — the
+// same convention NovaCatMascot uses for its own copy of this insight.
+function entityFromPath(path) {
+  const client = /^\/app\/clients\/([^/]+)/.exec(String(path || ""));
+  if (client) return { entityType: "client", entityId: client[1] };
+  const caseMatch = /^\/app\/cases\/([^/]+)/.exec(String(path || ""));
+  if (caseMatch) return { entityType: "case", entityId: caseMatch[1] };
+  return null;
+}
 
+// Fetches the same ProactiveNovaInsight shape NovaCatMascot's own bubble
+// uses (see aiInsightService.js's resolveProactiveNovaInsight) — one real,
+// access-scoped fact, page- or entity-scoped, never a guess. `enabled` lets
+// a caller skip the request entirely while nothing using the result is even
+// rendered (the panel this normally feeds is closed most of the time).
+export function useNovaProactiveInsight(currentPath, { enabled = true } = {}) {
+  const [insight, setInsight] = useState(null);
   useEffect(() => {
+    if (!enabled) return undefined;
     let active = true;
-    setInsight(null);
-    setDismissed(false);
     api
-      .get("/ai/proactive-insight", { params: { path: currentPath } })
+      .get("/ai/proactive-insight", { params: { path: currentPath, ...(entityFromPath(currentPath) || {}) } })
       .then((response) => { if (active) setInsight(response.data?.insight || null); })
       .catch(() => {});
     return () => { active = false; };
-  }, [currentPath]);
+  }, [currentPath, enabled]);
+  return insight;
+}
+
+// An unprompted, verified opening line shown before the user asks anything —
+// e.g. "You have 3 overdue follow-ups" on the Follow-ups page, or a specific
+// client's own state on their profile page. `insight.message` is plain text
+// (no markdown) and `insight.action` is a real link, not text to parse —
+// silent (renders nothing) when there's nothing worth flagging, so it never
+// becomes noise the user learns to ignore.
+export function NovaProactiveInsight({ insight, compact = false }) {
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => { setDismissed(false); }, [insight?.id]);
 
   if (!insight || dismissed) return null;
   return (
     <div className={`mb-2 flex items-start gap-2 rounded-2xl border border-brand-100 bg-brand-50/80 py-2.5 pl-3 pr-2 text-[12px] leading-5 text-brand-900 ${compact ? "mx-3" : "mx-4"}`}>
       <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-500" />
-      <div className="min-w-0 flex-1">{inlineContent(insight)}</div>
+      <div className="min-w-0 flex-1">
+        {insight.message}
+        {insight.action ? (
+          <>
+            {" "}
+            <Link to={insight.action.href} className="font-semibold text-brand-700 underline decoration-brand-200 underline-offset-2 hover:text-brand-900">{insight.action.label}</Link>
+          </>
+        ) : null}
+      </div>
       <button
         type="button"
         onClick={() => setDismissed(true)}
@@ -175,8 +215,12 @@ export function NovaProactiveInsight({ currentPath, compact = false }) {
   );
 }
 
-export function NovaSuggestions({ onSelect, currentPath, compact = false }) {
-  const suggestions = novaSuggestionsForPath(currentPath);
+export function NovaSuggestions({ onSelect, currentPath, persona, compact = false }) {
+  const pathSuggestions = novaSuggestionsForPath(currentPath);
+  const personaSuggestion = PERSONA_SUGGESTIONS[persona];
+  const suggestions = personaSuggestion
+    ? [personaSuggestion, ...pathSuggestions.filter((suggestion) => suggestion !== personaSuggestion)]
+    : pathSuggestions;
   return (
     <div className={`flex gap-2 overflow-x-auto ${compact ? "px-3 pb-2" : "px-4 pb-3"}`}>
       {suggestions.map((suggestion) => (

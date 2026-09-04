@@ -702,7 +702,11 @@ test("proactive insight is null on pages with nothing to flag, and reuses the sa
       leadFollowUp: { async count() { return 0; } },
     },
   });
-  assert.match(overdue.insight, /The workspace has 4 overdue follow-ups/);
+  assert.match(overdue.message, /The workspace has 4 overdue follow-ups/);
+  assert.equal(overdue.scope, "page");
+  assert.equal(overdue.kind, "followups");
+  assert.equal(overdue.severity, "attention");
+  assert.deepEqual(overdue.action, { label: "Open Follow-ups", href: "/app/follow-ups" });
 
   const noRoute = await resolveProactiveNovaInsight(request(), { currentPath: "/app/dashboard", db: {} });
   assert.equal(noRoute, null);
@@ -719,7 +723,8 @@ test("proactive insight on the Leads page only ever speaks for the authenticated
     },
   };
   const consultant = await resolveProactiveNovaInsight(request("consultant"), { currentPath: "/leads", db });
-  assert.match(consultant.insight, /You have 6 open leads assigned to you/);
+  assert.match(consultant.message, /You have 6 open leads assigned to you/);
+  assert.equal(consultant.persona, "Lead analyst");
   assert.equal(seenWhere.ownerUserId, "user-1");
 
   const admin = await resolveProactiveNovaInsight(request("admin"), { currentPath: "/leads", db: { lead: { async count() { return 6; } } } });
@@ -727,4 +732,111 @@ test("proactive insight on the Leads page only ever speaks for the authenticated
 
   const reviewQueue = await resolveProactiveNovaInsight(request("consultant"), { currentPath: "/leads/review", db });
   assert.equal(reviewQueue, null);
+});
+
+test("entity insight verifies tenant/permission access before running any priority-chain check", async () => {
+  let followUpCalled = false;
+  const db = {
+    client: { async findFirst() { return null; } }, // outside this caller's access scope
+    followUp: { async count() { followUpCalled = true; return 4; } },
+  };
+  const result = await resolveProactiveNovaInsight(request(), {
+    entityType: "client", entityId: "client-1", db,
+  });
+  assert.equal(result, null);
+  assert.equal(followUpCalled, false, "no priority-chain check may run before access is verified");
+});
+
+test("client entity insight walks the priority chain in order and stops at the first real signal", async () => {
+  let documentsCalled = false;
+  const db = {
+    client: { async findFirst() { return { id: "client-1" }; } },
+    case: { async findMany() { return [{ id: "case-1" }, { id: "case-2" }]; } },
+    agency: { async findUnique() { return { timezone: "America/Toronto" }; } },
+    followUp: { async count({ where }) { return where.dueDate?.lt ? 2 : 0; } },
+    clientDocument: { async count() { documentsCalled = true; return 5; } },
+  };
+  const now = new Date("2026-09-04T12:00:00.000Z");
+  const result = await resolveProactiveNovaInsight(request(), {
+    entityType: "client", entityId: "client-1", db, now,
+  });
+  assert.equal(result.scope, "entity");
+  assert.equal(result.kind, "client");
+  assert.equal(result.persona, "Client assistant");
+  assert.equal(result.severity, "attention");
+  assert.match(result.message, /2 overdue follow-ups on this client\./);
+  assert.deepEqual(result.entity, { type: "client", id: "client-1" });
+  assert.deepEqual(result.action, { label: "Open Client", href: "/app/clients/client-1" });
+  assert.equal(result.generatedAt, now.toISOString());
+  assert.equal(documentsCalled, false, "a later check must never run once an earlier one already found something");
+});
+
+test("client entity insight falls through to the next check once the earlier ones are clear, and reports a positive insight when the whole chain is clear", async () => {
+  const clear = {
+    client: { async findFirst() { return { id: "client-1" }; } },
+    case: { async findMany() { return [{ id: "case-1" }]; } },
+    agency: { async findUnique() { return { timezone: "America/Toronto" }; } },
+    followUp: { async count() { return 0; } },
+    clientDocument: { async count() { return 0; } },
+    caseInvoice: { async findMany() { return []; } },
+    questionnaireAssignment: { async count() { return 0; } },
+    appointment: { async findFirst() { return null; } },
+    caseWorkflowStep: { async findFirst() { return null; } },
+  };
+  const positive = await resolveProactiveNovaInsight(request(), { entityType: "client", entityId: "client-1", db: clear });
+  assert.equal(positive.severity, "success");
+  assert.match(positive.message, /Nothing needs attention on this client right now\./);
+
+  const withDocuments = { ...clear, clientDocument: { async count() { return 3; } } };
+  const documents = await resolveProactiveNovaInsight(request(), { entityType: "client", entityId: "client-1", db: withDocuments });
+  assert.equal(documents.severity, "attention");
+  assert.match(documents.message, /3 documents missing or needing changes on this client\./);
+});
+
+test("an overdue invoice on an entity is urgent, a merely outstanding one is only attention", async () => {
+  const base = {
+    client: { async findFirst() { return { id: "client-1" }; } },
+    case: { async findMany() { return [{ id: "case-1" }]; } },
+    agency: { async findUnique() { return { timezone: "America/Toronto", defaultCurrency: "CAD" }; } },
+    followUp: { async count() { return 0; } },
+    clientDocument: { async count() { return 0; } },
+  };
+  const now = new Date("2026-09-04T12:00:00.000Z");
+
+  const overdue = await resolveProactiveNovaInsight(request(), {
+    entityType: "client", entityId: "client-1", now,
+    db: { ...base, caseInvoice: { async findMany() { return [{ balance: 500, dueDate: new Date("2026-08-01T00:00:00.000Z") }]; } } },
+  });
+  assert.equal(overdue.severity, "urgent");
+  assert.match(overdue.message, /\$500\.00 overdue on this client\./);
+
+  const outstanding = await resolveProactiveNovaInsight(request(), {
+    entityType: "client", entityId: "client-1", now,
+    db: { ...base, caseInvoice: { async findMany() { return [{ balance: 500, dueDate: new Date("2026-10-01T00:00:00.000Z") }]; } } },
+  });
+  assert.equal(outstanding.severity, "attention");
+  assert.match(outstanding.message, /\$500\.00 outstanding on this client\./);
+});
+
+test("a case entity scopes every check to that one case, never the client's other unrelated cases", async () => {
+  const seenWhere = { documents: null, invoices: null, forms: null, appointments: null };
+  const db = {
+    case: { async findFirst() { return { id: "case-1", clientId: "client-1" }; } },
+    agency: { async findUnique() { return { timezone: "America/Toronto" }; } },
+    followUp: { async count() { return 0; } },
+    clientDocument: { async count({ where }) { seenWhere.documents = where; return 0; } },
+    caseInvoice: { async findMany({ where }) { seenWhere.invoices = where; return []; } },
+    questionnaireAssignment: { async count({ where }) { seenWhere.forms = where; return 0; } },
+    appointment: { async findFirst({ where }) { seenWhere.appointments = where; return null; } },
+    caseWorkflowStep: { async findFirst() { return null; } },
+  };
+  const result = await resolveProactiveNovaInsight(request(), { entityType: "case", entityId: "case-1", db });
+  assert.equal(result.kind, "case");
+  assert.equal(result.persona, "Case assistant");
+  assert.match(result.message, /Nothing needs attention on this case right now\./);
+  assert.deepEqual(result.action, { label: "Open Case", href: "/app/cases/case-1" });
+  for (const where of Object.values(seenWhere)) {
+    assert.equal(where.caseId, "case-1");
+    assert.equal(where.clientId, undefined, "a case-entity check must never widen back out to the whole client");
+  }
 });

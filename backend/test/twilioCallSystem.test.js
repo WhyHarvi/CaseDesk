@@ -125,6 +125,28 @@ test("status callbacks ingest into the shared call history and distinguish misse
   assert.match(webhookController, /\{ \.\.\.\(req\.body \|\| \{\}\), \.\.\.\(req\.query \|\| \{\}\) \}/);
 });
 
+test("a missed inbound call notifies every active staff member Twilio actually rang as Action Required", async () => {
+  const service = await source("../src/services/twilioCallService.js");
+  const notifyFn = service.slice(service.indexOf("async function notifyTwilioCall"), service.indexOf("async function reconcileTwilioSession"));
+
+  // STAFF/INTERNAL lines ring the whole CRM, while DIRECT/FRONTDESK lines
+  // ring a subset. CallRingDispatch is the authoritative record in both
+  // cases, so notification fan-out must follow it rather than a fixed role.
+  assert.match(notifyFn, /session\.status === "MISSED"/);
+  assert.match(notifyFn, /prisma\.callRingDispatch\.findMany/);
+  assert.match(notifyFn, /parentCallSid: session\.providerCallId/);
+  assert.match(notifyFn, /identityFromClient\(row\.identity\)/);
+  assert.match(notifyFn, /id: \{ in: dispatchedUserIds \}/);
+  assert.match(notifyFn, /agencyId: session\.agencyId/);
+  assert.match(notifyFn, /isActive: true, role: staffRoleWhere/);
+  assert.match(notifyFn, /attentionLevel: session\.status === "MISSED" \? "action_required" : "informational"/);
+  // Older calls and early callback races may have no dispatch rows; keep the
+  // existing handler/triage/admin fallback so the missed call is never lost.
+  assert.match(notifyFn, /if \(!recipientIds\.length && session\.handledByUserId\)/);
+  assert.match(notifyFn, /role: \{ in: \["admin", "frontdesk"\] \}/);
+  assert.match(notifyFn, /adminRecipientIds\(session\.agencyId\)/);
+});
+
 test("voice lines route inbound calls to their group and the internal line bridges staff calls", async () => {
   const service = await source("../src/services/twilioCallService.js");
   assert.match(service, /export async function provisionTwilioVoiceLine/);
