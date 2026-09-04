@@ -211,3 +211,83 @@ test("the cat celebrates specific real events (new client, lead converted, appoi
   assert.match(mascot, /activity === "coin"/);
   assert.match(mascot, /className="nova-pet-coin"/);
 });
+
+test("a small reactive Nova companion lives inside the open chat panel itself — waves on open, thinks while a reply loads — separate from the sober message-bubble avatar everywhere else", async () => {
+  const [mascot, presentation, styles, widget] = await Promise.all([
+    source("../../frontend/src/components/chat/NovaCatMascot.jsx"),
+    source("../../frontend/src/components/chat/NovaChatPresentation.jsx"),
+    source("../../frontend/src/index.css"),
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
+  ]);
+
+  // Reuses NovaCatMascot's own art instead of duplicating it, and doesn't
+  // touch NovaAssistantAvatar (the abstract, no-mascot logo used for
+  // message-bubble avatars and ChatsPage) or the existing sober
+  // NovaThinkingIndicator — this is additive, not a replacement.
+  assert.match(mascot, /export function NovaCatArt\(\{ activity \}\) \{/);
+  assert.match(presentation, /import { NovaCatArt } from "\.\/NovaCatMascot";/);
+  const avatarStart = presentation.indexOf("export function NovaAssistantAvatar(");
+  const avatarBody = presentation.slice(avatarStart, presentation.indexOf("\n}\n", avatarStart));
+  assert.doesNotMatch(avatarBody, /NovaCatArt/);
+
+  // The idle personality poses rotate on a timer — nothing here reads
+  // message content to pick one.
+  assert.match(presentation, /const CHAT_IDLE_POSES = \["nod", "dance", "stretch"\];/);
+
+  // Real, concrete state drives it: a wave when the panel opens, a
+  // thinking pose exactly while `sending` (the same flag the existing
+  // shimmering indicator already uses) is true.
+  assert.match(presentation, /export function NovaChatCompanion\(\{ active, sending \}\) \{/);
+  assert.match(presentation, /setActivity\("wave"\);\s*\n\s*const settle = window\.setTimeout\(\(\) => setActivity\("idle"\), 2200\);/);
+  assert.match(presentation, /if \(sending\) \{\s*\n\s*setActivity\("think"\);\s*\n\s*return undefined;\s*\n\s*\}/);
+  assert.match(presentation, /reduceMotion \? "idle" : activity/);
+
+  // Rendered only while the Nova thread itself is the active view — not
+  // for client/support conversations.
+  assert.match(widget, /\{view === "thread" && activeDetail\?\.kind === "ai" \? \(\s*\n\s*<NovaChatCompanion active sending=\{novaSending\} \/>/);
+
+  // Snapchat-style: peeks up from behind the composer bar, half-hidden by
+  // it, not a clean banner. position:absolute content paints above static
+  // content regardless of DOM order, so the composer needs an explicit
+  // higher z-index than the companion for the "tucked behind" half to
+  // actually render behind its own top edge instead of on top of it.
+  // A fixed pixel offset, not a percentage translate — percentages resolve
+  // against the scaled child's *unscaled* layout box, not its visually-
+  // scaled paint size, so a percentage here sinks far more of the
+  // character behind the bar than intended (found live: it hid nearly the
+  // entire companion, not half).
+  assert.match(presentation, /pointer-events-none absolute bottom-0 left-1\/2 z-0 -translate-x-1\/2 translate-y-6/);
+  assert.match(widget, /relative z-10 shrink-0 border-t border-slate-100 bg-white p-2\.5/);
+
+  // The "think" pose (a head tilt + fading "..." dots) is new art, reusing
+  // the same nova-pet-* CSS convention every other activity uses.
+  assert.match(mascot, /activity === "think"/);
+  assert.match(styles, /\.nova-pet\[data-activity="think"\] \.nova-pet-head \{[\s\S]*animation: nova-pet-think-tilt/);
+  assert.match(styles, /@keyframes nova-pet-think-dots/);
+});
+
+test("the full-page Chats view (the 'expanded' Nova conversation) gets the same companion and shared insight fetch as the floating panel", async () => {
+  const chatsPage = await source("../../frontend/src/pages/ChatsPage.jsx");
+
+  // Found live: ChatsPage still called NovaProactiveInsight with the old
+  // `currentPath` prop after NovaProactiveInsight was refactored (Phase 2)
+  // to take a fetched `insight` object instead of self-fetching from a
+  // path — since it no longer had its own fetch, that prop was silently
+  // ignored and `insight` was always undefined, so the banner could never
+  // render on this page. Fixed by using the same shared hook the floating
+  // panel already uses.
+  assert.match(chatsPage, /import \{ NovaAssistantAvatar, NovaChatCompanion, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator, useNovaProactiveInsight \} from "\.\.\/components\/chat\/NovaChatPresentation";/);
+  assert.match(chatsPage, /const novaPanelVisible = activeDetail\?\.kind === "ai" && novaMessages\.length === 1;/);
+  assert.match(chatsPage, /const novaInsight = useNovaProactiveInsight\(novaContextPath, \{ enabled: novaPanelVisible \}\);/);
+  assert.match(chatsPage, /\{novaPanelVisible \? <NovaProactiveInsight insight=\{novaInsight\} \/> : null\}/);
+  assert.match(chatsPage, /\{novaPanelVisible \? <NovaSuggestions onSelect=\{setDraft\} currentPath=\{novaContextPath\} persona=\{novaInsight\?\.persona\} \/> : null\}/);
+  assert.doesNotMatch(chatsPage, /<NovaProactiveInsight currentPath=/);
+
+  // The companion lives in its own positioning wrapper around ChatThread
+  // (mirroring FloatingChatWidget's structure) rather than nested inside
+  // the composer — nesting it there would make it paint on top of the
+  // composer's own background instead of tucking behind it.
+  assert.match(chatsPage, /<div className="relative min-h-0 flex-1">\s*\n\s*\{activeDetail\?\.kind === "ai" \? <NovaChatCompanion active sending=\{novaSending\} \/> : null\}\s*\n\s*<ChatThread/);
+  assert.match(chatsPage, /className="h-full px-4 py-5"/);
+  assert.match(chatsPage, /relative z-10 shrink-0 border-t border-slate-200\/70 bg-white\/90/);
+});

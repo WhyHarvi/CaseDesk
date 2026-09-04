@@ -283,7 +283,8 @@ input {
 .nova-pet[data-activity="dance"],
 .nova-pet[data-activity="wave"],
 .nova-pet[data-activity="headstand"],
-.nova-pet[data-activity="coin"] {
+.nova-pet[data-activity="coin"],
+.nova-pet[data-activity="think"] {
   transition-duration: 180ms;
 }
 
@@ -377,6 +378,16 @@ input {
   animation: nova-pet-coin-spin 0.6s linear infinite;
 }
 
+.nova-pet[data-activity="think"] .nova-pet-head {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: nova-pet-think-tilt 1.6s ease-in-out infinite alternate;
+}
+
+.nova-pet-think {
+  animation: nova-pet-think-dots 1.4s ease-in-out infinite;
+}
+
 .nova-pet.is-dragging .nova-pet-body {
   transform-box: fill-box;
   transform-origin: center;
@@ -455,6 +466,16 @@ input {
 @keyframes nova-pet-coin-spin {
   0%, 100% { transform: scaleX(1) translateY(0); }
   50% { transform: scaleX(0.2) translateY(-4px); }
+}
+
+@keyframes nova-pet-think-tilt {
+  from { transform: rotate(-4deg); }
+  to { transform: rotate(4deg); }
+}
+
+@keyframes nova-pet-think-dots {
+  0%, 100% { opacity: 0.2; transform: translateY(2px); }
+  50% { opacity: 1; transform: translateY(-2px); }
 }
 
 /* ---------- Call center dialpad ---------- */

@@ -26,7 +26,7 @@ import { useChatAttachmentUrls } from "../../hooks/useChatAttachmentUrls";
 import { useThreadAvatarUrls } from "../../hooks/useThreadAvatarUrls";
 import { playReceivedSound, playSentSound } from "../../utils/chatSounds";
 import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from "../../hooks/useNovaChat";
-import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator, useNovaProactiveInsight } from "./NovaChatPresentation";
+import { NovaAssistantAvatar, NovaChatCompanion, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator, useNovaProactiveInsight } from "./NovaChatPresentation";
 import SupportDeskPanel from "./SupportDeskPanel";
 import NovaCatMascot from "./NovaCatMascot";
 
@@ -679,7 +679,10 @@ export default function FloatingChatWidget() {
               </button>
             </header>
 
-            <div className={`min-h-0 flex-1 ${activeDetail?.kind === "ai" ? "bg-gradient-to-b from-brand-50/70 via-slate-50/40 to-white" : ""}`}>
+            <div className={`relative min-h-0 flex-1 ${activeDetail?.kind === "ai" ? "bg-gradient-to-b from-brand-50/70 via-slate-50/40 to-white" : ""}`}>
+              {view === "thread" && activeDetail?.kind === "ai" ? (
+                <NovaChatCompanion active sending={novaSending} />
+              ) : null}
               {listLoading && !mergedItems.length ? (
                 <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
               ) : !mergedItems.length ? (
@@ -753,7 +756,7 @@ export default function FloatingChatWidget() {
             </div>
 
             {view === "thread" && selectedId && activeDetail?.kind !== "support" ? (
-              <div className="shrink-0 border-t border-slate-100 bg-white p-2.5">
+              <div className="relative z-10 shrink-0 border-t border-slate-100 bg-white p-2.5">
                 {(activeDetail?.kind === "ai" ? novaError : error) ? <p className="mb-2 rounded-xl bg-rose-50 px-3 py-1.5 text-[11px] text-rose-700">{activeDetail?.kind === "ai" ? novaError : error}</p> : null}
                 {novaPanelVisible ? <NovaProactiveInsight insight={novaInsight} compact /> : null}
                 {novaPanelVisible ? <NovaSuggestions onSelect={setDraft} currentPath={location.pathname} persona={novaInsight?.persona} compact /> : null}

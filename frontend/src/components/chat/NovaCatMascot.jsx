@@ -85,7 +85,11 @@ function savedPosition() {
   return homePosition();
 }
 
-function NovaCatArt({ activity }) {
+// Exported so NovaChatPresentation.jsx's in-chat companion can render the
+// same character (scaled down) instead of duplicating this artwork — it's
+// visibly the same Nova, just anchored inside the open conversation
+// instead of wandering the screen.
+export function NovaCatArt({ activity }) {
   return (
     <svg viewBox="0 0 132 108" className="h-[104px] w-28 overflow-visible drop-shadow-[0_10px_12px_rgba(30,41,59,0.24)]" fill="none" aria-hidden="true">
       <defs>
@@ -159,6 +163,14 @@ function NovaCatArt({ activity }) {
         <g className="nova-pet-coin">
           <circle cx="34" cy="84" r="9" fill="url(#nova-coin)" stroke="#B45309" strokeWidth="1.5" />
           <path d="M30 84H38M34 80V88" stroke="#FEF3C7" strokeWidth="1.5" strokeLinecap="round" />
+        </g>
+      ) : null}
+
+      {activity === "think" ? (
+        <g className="nova-pet-think" fill="#527CAF">
+          <circle cx="88" cy="30" r="2.6" opacity="0.9" />
+          <circle cx="97" cy="24" r="2.2" opacity="0.65" />
+          <circle cx="105" cy="19" r="1.8" opacity="0.4" />
         </g>
       ) : null}
     </svg>

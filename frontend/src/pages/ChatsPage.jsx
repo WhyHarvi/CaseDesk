@@ -31,7 +31,7 @@ import { useChatAttachmentUrls } from "../hooks/useChatAttachmentUrls";
 import { useThreadAvatarUrls } from "../hooks/useThreadAvatarUrls";
 import { playReceivedSound, playSentSound } from "../utils/chatSounds";
 import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from "../hooks/useNovaChat";
-import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator } from "../components/chat/NovaChatPresentation";
+import { NovaAssistantAvatar, NovaChatCompanion, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator, useNovaProactiveInsight } from "../components/chat/NovaChatPresentation";
 import SupportDeskPanel from "../components/chat/SupportDeskPanel";
 import CommunicationComposer from "../components/case-profile/communication/CommunicationComposer";
 
@@ -507,6 +507,8 @@ export default function ChatsPage() {
   const [smsSyncing, setSmsSyncing] = useState(false);
   const { messages: novaMessages, sending: novaSending, error: novaError } = useNovaChat();
   const novaContextPath = searchParams.get("from") || location.pathname;
+  const novaPanelVisible = activeDetail?.kind === "ai" && novaMessages.length === 1;
+  const novaInsight = useNovaProactiveInsight(novaContextPath, { enabled: novaPanelVisible });
 
   const novaItem = useMemo(() => {
     const latest = novaMessages[novaMessages.length - 1];
@@ -1499,11 +1501,13 @@ export default function ChatsPage() {
                 <SupportDeskPanel />
               ) : (
                 <>
-                  <ChatThread
+                  <div className="relative min-h-0 flex-1">
+                    {activeDetail?.kind === "ai" ? <NovaChatCompanion active sending={novaSending} /> : null}
+                    <ChatThread
                 messages={displayMessages}
                 mineDirection="Outbound"
                 loading={detailLoading}
-                className="min-h-0 flex-1 px-4 py-5"
+                className="h-full px-4 py-5"
                 mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-slate-800 to-slate-950 text-white" : activeDetail?.kind === "email" ? "rounded-br-sm border border-blue-200 bg-blue-50 text-slate-900" : activeDetail?.kind === "sms" ? "rounded-br-lg bg-sky-600 text-white" : activeDetail?.kind === "client" ? "rounded-br-sm border border-slate-300 bg-white text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
                 theirBubbleClassName={activeDetail?.kind === "ai" ? "rounded-bl-lg border border-brand-100 bg-white/95 text-slate-800 shadow-[0_8px_24px_rgba(73,104,149,0.12)]" : "rounded-bl-lg border border-slate-200 bg-white text-slate-800"}
                 attachmentFileUrl={attachmentFileUrl}
@@ -1542,12 +1546,13 @@ export default function ChatsPage() {
                   </>
                 }
               />
+                  </div>
 
               {(activeDetail?.kind === "ai" ? novaError : error) ? <p className="mx-4 mb-2 shrink-0 rounded-2xl bg-rose-50 px-4 py-2.5 text-[13px] text-rose-700">{activeDetail?.kind === "ai" ? novaError : error}</p> : null}
 
-              <div className="shrink-0 border-t border-slate-200/70 bg-white/90 px-4 py-3 backdrop-blur-xl">
-                {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaProactiveInsight currentPath={novaContextPath} /> : null}
-                {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaSuggestions onSelect={setDraft} currentPath={novaContextPath} /> : null}
+              <div className="relative z-10 shrink-0 border-t border-slate-200/70 bg-white/90 px-4 py-3 backdrop-blur-xl">
+                {novaPanelVisible ? <NovaProactiveInsight insight={novaInsight} /> : null}
+                {novaPanelVisible ? <NovaSuggestions onSelect={setDraft} currentPath={novaContextPath} persona={novaInsight?.persona} /> : null}
                 {activeDetail?.kind === "sms" ? (
                   <div className="mb-2 flex min-h-10 items-center gap-3 rounded-xl border border-sky-100 bg-sky-50/70 px-3">
                     <label htmlFor="chat-sms-sender" className="shrink-0 text-xs font-semibold text-sky-800">Send from</label>

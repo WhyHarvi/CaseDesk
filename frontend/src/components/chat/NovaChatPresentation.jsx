@@ -1,8 +1,10 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Sparkles, X } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useReducedMotion } from "framer-motion";
 import api from "../../services/api";
 import { useTypewriter } from "../../hooks/useTypewriter";
+import { NovaCatArt } from "./NovaCatMascot";
 
 // Nova's identity is a restrained, faceted star crossing an orbital ring.
 // It is an abstract product logo—no face, mascot, or letter monogram—and
@@ -128,6 +130,73 @@ export function NovaMessageContent({ text, animate = false }) {
         }
         return <p key={index}>{inlineContent(line)}</p>;
       })}
+    </div>
+  );
+}
+
+// The playful counterpart to NovaAssistantAvatar's abstract logo — the same
+// character NovaCatMascot shows wandering the screen, scaled down and
+// anchored at the top of the open Nova conversation instead. Deliberately
+// only lives here: message-bubble avatars, ChatsPage, and the sober
+// shimmering NovaThinkingIndicator below are untouched, so this is additive
+// personality in the quick-chat panel rather than a wholesale identity
+// change. Reacts to real conversation state — a wave when the panel opens,
+// a thinking pose while `sending` is true — plus an occasional idle pose
+// for personality while waiting on the user; it never tries to read the
+// actual messages (no sentiment/"is this funny" detection).
+const CHAT_IDLE_POSES = ["nod", "dance", "stretch"];
+
+export function NovaChatCompanion({ active, sending }) {
+  const reduceMotion = useReducedMotion();
+  const [activity, setActivity] = useState("wave");
+  const idleSettleRef = useRef(null);
+
+  useEffect(() => {
+    if (!active || reduceMotion) return undefined;
+    setActivity("wave");
+    const settle = window.setTimeout(() => setActivity("idle"), 2200);
+    return () => window.clearTimeout(settle);
+  }, [active, reduceMotion]);
+
+  useEffect(() => {
+    if (!active || reduceMotion) return undefined;
+    if (sending) {
+      setActivity("think");
+      return undefined;
+    }
+    setActivity((current) => (current === "think" ? "idle" : current));
+    const timer = window.setInterval(() => {
+      setActivity(CHAT_IDLE_POSES[Math.floor(Math.random() * CHAT_IDLE_POSES.length)]);
+      idleSettleRef.current = window.setTimeout(() => setActivity("idle"), 2200);
+    }, 14000 + Math.random() * 8000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(idleSettleRef.current);
+    };
+  }, [active, sending, reduceMotion]);
+
+  if (!active) return null;
+  // Peeks up from behind the composer bar, half-hidden by it — a Snapchat-
+  // style avatar, not a banner. Positioned relative to the message-area
+  // wrapper (a static sibling that comes right before the composer in the
+  // DOM), anchored to its own bottom edge (= the composer's top edge,
+  // regardless of how tall the composer itself grows downward — the
+  // suggestion chips and proactive-insight banner both add real height
+  // there) and nudged down by a fixed pixel amount so a consistent slice
+  // of it tucks behind the bar. This deliberately isn't a percentage
+  // translate: percentages resolve against the *unscaled* layout box of
+  // the scaled-down child, not its visually-scaled paint size, so a
+  // percentage here sinks far more of the character than intended — a
+  // fixed offset means what it says regardless of that mismatch. The
+  // composer needs a higher z-index than this for the "hidden behind"
+  // half to actually work — position:absolute content otherwise paints
+  // above static content regardless of DOM order, which would put this in
+  // front of the bar instead of tucked behind its top edge.
+  return (
+    <div className="pointer-events-none absolute bottom-0 left-1/2 z-0 -translate-x-1/2 translate-y-6">
+      <div className="nova-pet origin-bottom scale-[0.62] drop-shadow-[0_6px_10px_rgba(30,41,59,0.18)]" data-activity={activity}>
+        <NovaCatArt activity={reduceMotion ? "idle" : activity} />
+      </div>
     </div>
   );
 }
