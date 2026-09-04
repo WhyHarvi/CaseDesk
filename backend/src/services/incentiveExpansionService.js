@@ -311,38 +311,101 @@ export async function recordRevenueMovement(agencyId, { caseId, caseInvoiceId, d
     select: { paymentType: true, case: { select: { assignedUserId: true, revenueOwnerId: true } } },
   });
   if (!invoice) return { recorded: false, reason: "invoice_not_found" };
+
+  if (Number(delta) < 0) {
+    return reverseRevenueCredits(db, agencyId, { caseId, caseInvoiceId, refundAmount: Math.abs(Number(delta)), triggerSource, triggerRef, collectedAt });
+  }
+
   const category = await db.agencyFeeCategory.findFirst({ where: { agencyId, code: invoice.paymentType, isActive: true } });
   if (!category?.countsTowardRevenue) return { recorded: false, reason: "revenue_category_excluded" };
-  let original = null;
-  if (Number(delta) < 0) {
-    original = await db.incentiveRevenueCredit.findFirst({
-      where: { agencyId, caseInvoiceId, netAmount: { gt: 0 } }, orderBy: [{ collectedAt: "asc" }, { id: "asc" }],
-    });
-    if (!original) return { recorded: false, reason: "original_credit_missing" };
-    const reversed = await db.incentiveRevenueCredit.aggregate({
-      where: { agencyId, reversesCreditId: original.id }, _sum: { netAmount: true },
-    });
-    const remaining = Math.max(0, Number(original.netAmount) + Number(reversed._sum.netAmount || 0));
-    if (remaining === 0) return { recorded: false, reason: "fully_reversed" };
-    delta = -Math.min(Math.abs(Number(delta)), remaining);
-  }
-  const ownerId = original?.revenueOwnerId || invoice.case.revenueOwnerId || invoice.case.assignedUserId;
+  const ownerId = invoice.case.revenueOwnerId || invoice.case.assignedUserId;
   if (!ownerId) return { recorded: false, reason: "revenue_owner_missing" };
-  const owner = original ? { id: original.revenueOwnerId, fullName: original.revenueOwnerSnapshot }
-    : await db.user.findFirst({ where: { id: ownerId, agencyId, status: "active" }, select: { id: true, fullName: true } });
+  const owner = await db.user.findFirst({ where: { id: ownerId, agencyId, status: "active" }, select: { id: true, fullName: true } });
   if (!owner) return { recorded: false, reason: "revenue_owner_invalid" };
-  const period = original
-    ? await db.incentivePeriod.findFirst({ where: { id: original.incentivePeriodId, agencyId } })
-    : await getOrCreateActiveIncentivePeriod(agencyId, collectedAt, db);
+  const period = await getOrCreateActiveIncentivePeriod(agencyId, collectedAt, db);
   try {
     const row = await db.incentiveRevenueCredit.create({ data: { agencyId, incentivePeriodId: period.id, caseId, caseInvoiceId,
       revenueOwnerId: owner.id, revenueOwnerSnapshot: owner.fullName, revenueCategory: category.code,
-      sourceAmount: Number(delta), netAmount: Number(delta), triggerSource, triggerRef, reversesCreditId: original?.id || null, collectedAt } });
+      sourceAmount: Number(delta), netAmount: Number(delta), triggerSource, triggerRef, reversesCreditId: null, collectedAt } });
     return { recorded: true, row };
   } catch (error) {
     if (error?.code === "P2002") return { recorded: false, reason: "already_recorded" };
     throw error;
   }
+}
+
+// A refund (or a mistaken-payment void) can need to reverse revenue spread
+// across more than one original collection on the same invoice — an
+// invoice paid in two installments produces two separate positive
+// IncentiveRevenueCredit rows. The old logic only ever looked at the single
+// oldest positive credit: once that one was fully reversed, a later refund
+// on the same invoice found "remaining: 0" on it and gave up with
+// fully_reversed, even though a second collection's credit still sat
+// completely untouched — silently leaving contest revenue inflated with no
+// error anywhere. This walks every original credit oldest-first, taking as
+// much as each one still has left until the refund amount is used up.
+//
+// Each reversal row is keyed by `${triggerRef}:${original.id}` rather than
+// the bare triggerRef, so one refund event can safely produce more than one
+// row under the existing @@unique([agencyId, triggerSource, triggerRef])
+// constraint — a retry recomputes the same per-original keys and only the
+// still-missing rows insert, the rest hit P2002 and are skipped as already
+// applied. Original (non-reversal) credits keep using the bare triggerRef
+// exactly as before.
+//
+// Each row also reuses ITS OWN original credit's snapshotted period, owner,
+// and revenueCategory instead of re-deriving them from the CURRENT
+// AgencyFeeCategory/case config — collections spanning more than one period
+// stay attributed to their own period, and a later category or case
+// reassignment can never block a historically valid reversal (the second
+// half of the same bug: countsTowardRevenue used to be re-checked against
+// today's config instead of trusting what was true when the money was
+// actually collected).
+async function reverseRevenueCredits(db, agencyId, { caseId, caseInvoiceId, refundAmount, triggerSource, triggerRef, collectedAt }) {
+  const originals = await db.incentiveRevenueCredit.findMany({
+    where: { agencyId, caseInvoiceId, netAmount: { gt: 0 } },
+    orderBy: [{ collectedAt: "asc" }, { id: "asc" }],
+  });
+  if (!originals.length) return { recorded: false, reason: "original_credit_missing" };
+
+  const reversedSums = await db.incentiveRevenueCredit.groupBy({
+    by: ["reversesCreditId"],
+    where: { agencyId, reversesCreditId: { in: originals.map((original) => original.id) } },
+    _sum: { netAmount: true },
+  });
+  const alreadyReversedById = new Map(reversedSums.map((row) => [row.reversesCreditId, Math.abs(Number(row._sum.netAmount || 0))]));
+
+  let remaining = refundAmount;
+  const plan = [];
+  for (const original of originals) {
+    if (remaining <= 0) break;
+    const available = Math.max(0, Number(original.netAmount) - (alreadyReversedById.get(original.id) || 0));
+    if (available <= 0) continue;
+    const amount = Math.min(available, remaining);
+    remaining -= amount;
+    plan.push({ original, amount });
+  }
+  if (!plan.length) return { recorded: false, reason: "fully_reversed" };
+
+  const rows = [];
+  for (const { original, amount } of plan) {
+    try {
+      rows.push(await db.incentiveRevenueCredit.create({ data: {
+        agencyId, incentivePeriodId: original.incentivePeriodId, caseId, caseInvoiceId,
+        revenueOwnerId: original.revenueOwnerId, revenueOwnerSnapshot: original.revenueOwnerSnapshot,
+        revenueCategory: original.revenueCategory,
+        sourceAmount: -amount, netAmount: -amount, triggerSource, triggerRef: `${triggerRef}:${original.id}`,
+        reversesCreditId: original.id, collectedAt,
+      } }));
+    } catch (error) {
+      if (error?.code !== "P2002") throw error;
+    }
+  }
+  if (!rows.length) return { recorded: false, reason: "already_recorded" };
+  if (remaining > 0.01) {
+    logger.warn("incentive.revenue_reversal_exceeds_collected", { agencyId, caseId, caseInvoiceId, triggerSource, triggerRef, unallocated: remaining });
+  }
+  return { recorded: true, rows };
 }
 
 export async function finalizeRevenueContest(agencyId, actorUserId, { periodId, prizeType, prizeValue }) {
