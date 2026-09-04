@@ -6,7 +6,7 @@ import { normalizeContactMatchInput } from "../src/services/contactDuplicateServ
 test("calendar contact matching tolerates malformed legacy guest values", () => {
   assert.deepEqual(
     normalizeContactMatchInput({ email: "not-an-email", phone: "not a phone" }),
-    { emailNormalized: null, phoneNormalized: null },
+    { emailNormalized: null, phoneNormalized: null, secondaryPhoneNormalized: null },
   );
 });
 

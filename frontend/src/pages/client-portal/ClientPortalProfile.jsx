@@ -15,12 +15,12 @@ export default function ClientPortalProfile() {
   const { overview, loading, error, refresh } = usePortalData();
   const { signOut } = useAuth();
   const { showToast } = usePortalToast();
-  const [form, setForm] = useState({ phone: "", address: "" });
+  const [form, setForm] = useState({ phone: "", secondaryPhone: "", address: "" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    if (overview?.client) setForm({ phone: overview.client.phone || "", address: overview.client.address || "" });
+    if (overview?.client) setForm({ phone: overview.client.phone || "", secondaryPhone: overview.client.secondaryPhone || "", address: overview.client.address || "" });
   }, [overview?.client]);
 
   if (loading) return <ClientPortalSkeleton rows={3} />;
@@ -33,7 +33,7 @@ export default function ClientPortalProfile() {
   }
 
   const { client, agency } = overview;
-  const dirty = form.phone !== (client.phone || "") || form.address !== (client.address || "");
+  const dirty = form.phone !== (client.phone || "") || form.secondaryPhone !== (client.secondaryPhone || "") || form.address !== (client.address || "");
 
   async function save(event) {
     event.preventDefault();
@@ -78,8 +78,12 @@ export default function ClientPortalProfile() {
           <p className="mt-0.5 text-[13px] text-slate-500">Keep these up to date so your consultant can reach you.</p>
 
           <label className="mt-4 block text-sm font-medium text-slate-700">
-            <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-slate-400" />Phone</span>
-            <input value={form.phone} maxLength={40} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} placeholder="+1 416 555 0123" className={inputClass} />
+            <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-slate-400" />Primary phone</span>
+            <input type="tel" value={form.phone} maxLength={40} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} placeholder="+1 416 555 0123" className={inputClass} />
+          </label>
+          <label className="mt-4 block text-sm font-medium text-slate-700">
+            <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-slate-400" />Secondary phone <span className="font-normal text-slate-400">(optional)</span></span>
+            <input type="tel" value={form.secondaryPhone} maxLength={40} onChange={(event) => setForm((current) => ({ ...current, secondaryPhone: event.target.value }))} placeholder="Backup or alternate number" className={inputClass} />
           </label>
           <label className="mt-4 block text-sm font-medium text-slate-700">
             <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-slate-400" />Address</span>

@@ -5,7 +5,7 @@ import { createHttpError } from "../utils/http.js";
 const MAX_CALENDAR_RANGE_MS = 93 * 24 * 60 * 60_000;
 
 const calendarInclude = {
-  client: { select: { id: true, fullName: true, email: true, phone: true } },
+  client: { select: { id: true, fullName: true, email: true, phone: true, secondaryPhone: true } },
   case: { select: { id: true, caseType: true } },
   assignedTo: { select: { id: true, fullName: true, zoomHostMapping: { select: { status: true } } } },
   sessionType: { select: { id: true, name: true, durationMinutes: true, allowedMeetingModes: true } },
@@ -73,11 +73,11 @@ export async function listCalendarAppointments(req, res) {
   ].map((emailNormalized) => ({ emailNormalized }));
   contactWhere.push(...[
     ...new Set(unlinkedContacts.map((item) => item.phoneNormalized).filter(Boolean)),
-  ].map((phoneNormalized) => ({ phoneNormalized })));
+  ].flatMap((phoneNormalized) => [{ phoneNormalized }, { secondaryPhoneNormalized: phoneNormalized }]));
 
   const matchingClients = contactWhere.length ? await prisma.client.findMany({
     where: { agencyId: req.auth.agencyId, OR: contactWhere },
-    select: { id: true, fullName: true, email: true, phone: true, emailNormalized: true, phoneNormalized: true },
+    select: { id: true, fullName: true, email: true, phone: true, secondaryPhone: true, emailNormalized: true, phoneNormalized: true, secondaryPhoneNormalized: true },
   }) : [];
   const contactByAppointment = new Map(unlinkedContacts.map((item) => [item.appointmentId, item]));
 
@@ -87,10 +87,10 @@ export async function listCalendarAppointments(req, res) {
       const contact = contactByAppointment.get(item.id);
       const candidates = matchingClients.filter((client) =>
         (contact?.emailNormalized && client.emailNormalized === contact.emailNormalized)
-        || (contact?.phoneNormalized && client.phoneNormalized === contact.phoneNormalized));
+        || (contact?.phoneNormalized && [client.phoneNormalized, client.secondaryPhoneNormalized].includes(contact.phoneNormalized)));
       const matchedClient = candidates.length === 1 ? candidates[0] : null;
       if (!matchedClient) return item;
-      const { emailNormalized: _emailNormalized, phoneNormalized: _phoneNormalized, ...safeClient } = matchedClient;
+      const { emailNormalized: _emailNormalized, phoneNormalized: _phoneNormalized, secondaryPhoneNormalized: _secondaryPhoneNormalized, ...safeClient } = matchedClient;
       return { ...item, matchedClient: safeClient };
     }),
   });

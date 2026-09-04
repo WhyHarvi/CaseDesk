@@ -628,7 +628,7 @@ export async function listCalendarAppointments(req, res) {
       startsAt: { lt: to },
       endsAt: { gt: from },
     },
-    include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+    include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true, secondaryPhone: true } } },
     orderBy: { startsAt: "asc" },
   });
   const unlinkedContacts = data
@@ -639,10 +639,10 @@ export async function listCalendarAppointments(req, res) {
   ].map((emailNormalized) => ({ emailNormalized }));
   contactWhere.push(...[
     ...new Set(unlinkedContacts.map((item) => item.phoneNormalized).filter(Boolean)),
-  ].map((phoneNormalized) => ({ phoneNormalized })));
+  ].flatMap((phoneNormalized) => [{ phoneNormalized }, { secondaryPhoneNormalized: phoneNormalized }]));
   const matchingClients = contactWhere.length ? await prisma.client.findMany({
     where: { agencyId: req.auth.agencyId, OR: contactWhere },
-    select: { id: true, fullName: true, email: true, phone: true, emailNormalized: true, phoneNormalized: true },
+    select: { id: true, fullName: true, email: true, phone: true, secondaryPhone: true, emailNormalized: true, phoneNormalized: true, secondaryPhoneNormalized: true },
   }) : [];
   const contactByAppointment = new Map(unlinkedContacts.map((item) => [item.appointmentId, item]));
   res.json({
@@ -651,10 +651,10 @@ export async function listCalendarAppointments(req, res) {
       const contact = contactByAppointment.get(item.id);
       const candidates = matchingClients.filter((client) =>
         (contact?.emailNormalized && client.emailNormalized === contact.emailNormalized)
-        || (contact?.phoneNormalized && client.phoneNormalized === contact.phoneNormalized));
+        || (contact?.phoneNormalized && [client.phoneNormalized, client.secondaryPhoneNormalized].includes(contact.phoneNormalized)));
       const matchedClient = candidates.length === 1 ? candidates[0] : null;
       if (!matchedClient) return item;
-      const { emailNormalized: _emailNormalized, phoneNormalized: _phoneNormalized, ...safeClient } = matchedClient;
+      const { emailNormalized: _emailNormalized, phoneNormalized: _phoneNormalized, secondaryPhoneNormalized: _secondaryPhoneNormalized, ...safeClient } = matchedClient;
       return { ...item, matchedClient: safeClient };
     }),
   });
@@ -695,7 +695,7 @@ export async function createBookingAppointment(req, res) {
 
   let client = null;
   if (body.clientId) {
-    client = await prisma.client.findFirst({ where: { id: body.clientId, agencyId: req.auth.agencyId }, select: { id: true, fullName: true, assignedUserId: true, email: true, phone: true } });
+    client = await prisma.client.findFirst({ where: { id: body.clientId, agencyId: req.auth.agencyId }, select: { id: true, fullName: true, assignedUserId: true, email: true, phone: true, secondaryPhone: true } });
     if (!client) throw createHttpError(400, "Client was not found.", "VALIDATION_ERROR");
   }
   let lead = null;
@@ -723,20 +723,25 @@ export async function createBookingAppointment(req, res) {
   if (!client && !lead && guestName) {
     try {
       const contact = normalizeContact({ phone: body.guestPhone, email: body.guestEmail });
-      const contactOr = [
+      const clientContactOr = [
+        contact.emailNormalized ? { emailNormalized: contact.emailNormalized } : null,
+        contact.phoneNormalized ? { phoneNormalized: contact.phoneNormalized } : null,
+        contact.phoneNormalized ? { secondaryPhoneNormalized: contact.phoneNormalized } : null,
+      ].filter(Boolean);
+      const leadContactOr = [
         contact.emailNormalized ? { emailNormalized: contact.emailNormalized } : null,
         contact.phoneNormalized ? { phoneNormalized: contact.phoneNormalized } : null,
       ].filter(Boolean);
-      if (contactOr.length) {
+      if (clientContactOr.length) {
         const matches = await prisma.client.findMany({
-          where: { agencyId: req.auth.agencyId, OR: contactOr },
-          select: { id: true, fullName: true, assignedUserId: true, email: true, phone: true },
+          where: { agencyId: req.auth.agencyId, OR: clientContactOr },
+          select: { id: true, fullName: true, assignedUserId: true, email: true, phone: true, secondaryPhone: true },
           take: 2,
         });
         if (matches.length === 1) client = matches[0];
         if (!client) {
           const leadMatches = await prisma.lead.findMany({
-            where: { agencyId: req.auth.agencyId, convertedClientId: null, status: "OPEN", OR: contactOr },
+            where: { agencyId: req.auth.agencyId, convertedClientId: null, status: "OPEN", OR: leadContactOr },
             select: { id: true, firstName: true, lastName: true, email: true, phone: true, ownerUserId: true },
             take: 2,
           });
@@ -1148,17 +1153,17 @@ export async function getFreeConsultationEligibility(req, res) {
 export async function lookupBookingClients(req, res) {
   const search = String(req.query.search || "").trim().slice(0, 200);
   const searchDigits = search.replace(/\D/g, "");
-  const searchFields = search ? ["fullName", "email", "emailNormalized", "phone", "clientNumber"].map((field) => ({
+  const searchFields = search ? ["fullName", "email", "emailNormalized", "phone", "secondaryPhone", "clientNumber"].map((field) => ({
     [field]: { contains: search, mode: "insensitive" },
   })) : [];
-  if (searchDigits.length >= 7) searchFields.push({ phoneNormalized: { contains: searchDigits } });
+  if (searchDigits.length >= 7) searchFields.push({ phoneNormalized: { contains: searchDigits } }, { secondaryPhoneNormalized: { contains: searchDigits } });
   const clients = await prisma.client.findMany({
     where: {
       agencyId: req.auth.agencyId,
       archivedAt: null,
       ...(searchFields.length ? { OR: searchFields } : {}),
     },
-    select: { id: true, fullName: true, email: true, phone: true, clientNumber: true },
+    select: { id: true, fullName: true, email: true, phone: true, secondaryPhone: true, clientNumber: true },
     orderBy: { createdAt: "desc" },
     take: search ? 20 : 100,
   });
@@ -1169,20 +1174,20 @@ export async function lookupBookingContacts(req, res) {
   const search = String(req.query.search || "").trim().slice(0, 200);
   if (!search) return res.json({ data: [] });
   const searchDigits = search.replace(/\D/g, "");
-  const clientFields = ["fullName", "email", "emailNormalized", "phone", "clientNumber"].map((field) => ({
+  const clientFields = ["fullName", "email", "emailNormalized", "phone", "secondaryPhone", "clientNumber"].map((field) => ({
     [field]: { contains: search, mode: "insensitive" },
   }));
   const leadFields = ["firstName", "lastName", "email", "emailNormalized", "phone", "leadNumber"].map((field) => ({
     [field]: { contains: search, mode: "insensitive" },
   }));
   if (searchDigits.length >= 7) {
-    clientFields.push({ phoneNormalized: { contains: searchDigits } });
+    clientFields.push({ phoneNormalized: { contains: searchDigits } }, { secondaryPhoneNormalized: { contains: searchDigits } });
     leadFields.push({ phoneNormalized: { contains: searchDigits } });
   }
   const [clients, leads] = await Promise.all([
     prisma.client.findMany({
       where: { agencyId: req.auth.agencyId, archivedAt: null, OR: clientFields },
-      select: { id: true, fullName: true, email: true, phone: true, clientNumber: true },
+      select: { id: true, fullName: true, email: true, phone: true, secondaryPhone: true, clientNumber: true },
       orderBy: { createdAt: "desc" },
       take: 10,
     }),
@@ -1743,7 +1748,11 @@ export async function convertAppointmentToClient(req, res) {
   const result = await prisma.$transaction(async (tx) => {
     await lockAgencyContactIntake(tx, req.auth.agencyId);
     const contact = normalizeContact({ phone: appointment.guestPhone, email: appointment.guestEmail });
-    const contactOr = [contact.emailNormalized ? { emailNormalized: contact.emailNormalized } : null, contact.phoneNormalized ? { phoneNormalized: contact.phoneNormalized } : null].filter(Boolean);
+    const contactOr = [
+      contact.emailNormalized ? { emailNormalized: contact.emailNormalized } : null,
+      contact.phoneNormalized ? { phoneNormalized: contact.phoneNormalized } : null,
+      contact.phoneNormalized ? { secondaryPhoneNormalized: contact.phoneNormalized } : null,
+    ].filter(Boolean);
     const existingMatches = contactOr.length ? await tx.client.findMany({ where: { agencyId: req.auth.agencyId, OR: contactOr }, take: 3 }) : [];
     if (existingMatches.length > 1) {
       throw createHttpError(409, "More than one client matches this visitor. Open the client list and link the correct record before continuing.", "AMBIGUOUS_CLIENT_MATCH");

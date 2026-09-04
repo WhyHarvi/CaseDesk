@@ -77,7 +77,7 @@ function CallerName({ from, onDone }) {
       .then((response) => {
         if (!active) return;
         const data = response.data?.data || {};
-        const client = (data.clients || []).find((row) => String(row.phone || "").replace(/\D/g, "") === digits);
+        const client = (data.clients || []).find((row) => [row.phone, row.secondaryPhone].some((phone) => String(phone || "").replace(/\D/g, "") === digits));
         const lead = (data.leads || []).find((row) => String(row.phone || "").replace(/\D/g, "") === digits);
         const matched = client?.fullName || lead?.fullName || "";
         if (matched) setName(matched);

@@ -25,7 +25,7 @@ function isImm5476(caseForm) {
 export async function buildFieldContext(caseForm) {
   const [caseItem, client, agency, applicantProfile] = await Promise.all([
     prisma.case.findUnique({ where: { id: caseForm.caseId }, select: { caseType: true, applicationNumber: true, stage: true, assignedUserId: true } }),
-    prisma.client.findUnique({ where: { id: caseForm.clientId }, select: { fullName: true, familyName: true, givenNames: true, dateOfBirth: true, email: true, phone: true, uci: true, address: true, clientNumber: true } }),
+    prisma.client.findUnique({ where: { id: caseForm.clientId }, select: { fullName: true, familyName: true, givenNames: true, dateOfBirth: true, email: true, phone: true, secondaryPhone: true, uci: true, address: true, clientNumber: true } }),
     prisma.agency.findUnique({ where: { id: caseForm.agencyId }, select: { name: true, address: true, addressUnit: true, city: true, province: true, country: true, postalCode: true, phone: true, faxNumber: true, email: true } }),
     caseForm.applicantProfileId
       ? prisma.immigrationProfile.findUnique({
@@ -51,6 +51,7 @@ export async function buildFieldContext(caseForm) {
         dateOfBirth: applicantProfile.dateOfBirth,
         email: applicantProfile.communicationEmail,
         phone: null,
+        secondaryPhone: null,
         uci: applicantProfile.uci,
         address: null,
         clientNumber: applicantProfile.applicationNumber,

@@ -33,7 +33,7 @@ export function useClientMatches(enabled, query, search, { debounceMs = 300 } = 
 }
 
 function clientLine(client) {
-  return [client.clientNumber ? `#${client.clientNumber}` : null, client.email, client.phone].filter(Boolean).join(" · ");
+  return [client.clientNumber ? `#${client.clientNumber}` : null, client.email, client.phone, client.secondaryPhone].filter(Boolean).join(" · ");
 }
 
 export default function ClientCombobox({
@@ -153,4 +153,3 @@ export default function ClientCombobox({
     </div>
   );
 }
-

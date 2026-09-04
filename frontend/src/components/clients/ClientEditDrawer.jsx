@@ -10,6 +10,7 @@ const defaultFormState = {
   familyName: "",
   email: "",
   phone: "",
+  secondaryPhone: "",
   dateOfBirth: "",
   maritalStatus: "",
   address: "",
@@ -34,6 +35,7 @@ function clientToFormState(client) {
     familyName: names.familyName,
     email: client.email || "",
     phone: client.phone || "",
+    secondaryPhone: client.secondaryPhone || "",
     dateOfBirth: formatDateForInput(client.dateOfBirth),
     maritalStatus: client.maritalStatus || "",
     address: client.address || "",
@@ -106,12 +108,13 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
         familyName: formState.familyName.trim(),
         email: formState.email.trim(),
         phone: formState.phone.trim(),
+        secondaryPhone: formState.secondaryPhone.trim(),
         address: formState.address.trim(),
         assignedUserId: formState.assignedUserId || "",
       };
       delete payload.fullName;
       if (!payload.email) delete payload.email;
-      if (!payload.phone) delete payload.phone;
+      if (!payload.phone && !isEditing) delete payload.phone;
       if (!payload.address) delete payload.address;
       ["dateOfBirth", "identificationExpiryDate"].forEach((field) => {
         if (!payload[field]) delete payload[field];
@@ -192,8 +195,13 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-sm font-medium text-slate-700">Phone</span>
-                  <input name="phone" value={formState.phone} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="+1 416 555 0100" />
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Primary phone</span>
+                  <input type="tel" name="phone" value={formState.phone} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="+1 416 555 0100" />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Secondary phone <span className="font-normal text-slate-400">(optional)</span></span>
+                  <input type="tel" name="secondaryPhone" value={formState.secondaryPhone} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="Backup or alternate number" />
                 </label>
 
                 <label className="block">

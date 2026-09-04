@@ -12,6 +12,8 @@ import { resolveSectionRequirements } from "../modules/case-information/caseRequ
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { logger } from "../services/logger.js";
 import { filterPortalRecordsByPermission, loadPortalPolicyContext, PORTAL_PERMISSION_KEYS, resolvePermissionFromPolicies } from "../services/clientPortalPolicyService.js";
+import { assertNoContactDuplicate, lockAgencyContactIntake, normalizeContact } from "../services/contactDuplicateService.js";
+import { syncClientToQuickBooks } from "../services/clientQuickBooksSyncService.js";
 
 // Everything in this controller is scoped through the logged-in user's
 // ClientUser link — the frontend never supplies client or agency ids.
@@ -475,6 +477,7 @@ export async function getPortalOverview(req, res) {
         fullName: link.client.fullName,
         email: link.client.email,
         phone: link.client.phone,
+        secondaryPhone: link.client.secondaryPhone,
         address: link.client.address,
       },
       agency: {
@@ -1109,13 +1112,41 @@ export async function signPortalAgreement(req, res) {
 
 export async function updatePortalProfile(req, res) {
   const link = await linkedClient(req);
-  const phone = String(req.body?.phone ?? link.client.phone ?? "").trim().slice(0, 40) || null;
+  const primaryContact = normalizeContact({ phone: String(req.body?.phone ?? link.client.phone ?? "").trim().slice(0, 40) });
+  const secondaryContact = normalizeContact({ phone: String(req.body?.secondaryPhone ?? link.client.secondaryPhone ?? "").trim().slice(0, 40) });
+  if (primaryContact.phoneNormalized && primaryContact.phoneNormalized === secondaryContact.phoneNormalized) {
+    throw createHttpError(400, "Primary and secondary phone numbers must be different.", "VALIDATION_ERROR");
+  }
   const address = String(req.body?.address ?? link.client.address ?? "").trim().slice(0, 300) || null;
-  const client = await prisma.client.update({
-    where: { id: link.clientId },
-    data: { phone, address },
-    select: { id: true, fullName: true, email: true, phone: true, address: true, dateOfBirth: true },
+  const client = await prisma.$transaction(async (tx) => {
+    await lockAgencyContactIntake(tx, req.auth.agencyId);
+    try {
+      await assertNoContactDuplicate(tx, {
+        agencyId: req.auth.agencyId,
+        phoneNormalized: primaryContact.phoneNormalized,
+        secondaryPhoneNormalized: secondaryContact.phoneNormalized,
+        emailNormalized: link.client.emailNormalized,
+        excludeClientId: link.clientId,
+      });
+    } catch (error) {
+      if (error?.status === 409 || error?.statusCode === 409) {
+        throw createHttpError(409, "One of these contact details is already in use. Contact your consultant for help.", "DUPLICATE_CONTACT");
+      }
+      throw error;
+    }
+    return tx.client.update({
+      where: { id: link.clientId },
+      data: {
+        phone: primaryContact.phone,
+        phoneNormalized: primaryContact.phoneNormalized,
+        secondaryPhone: secondaryContact.phone,
+        secondaryPhoneNormalized: secondaryContact.phoneNormalized,
+        address,
+      },
+      select: { id: true, fullName: true, email: true, phone: true, secondaryPhone: true, address: true, dateOfBirth: true },
+    });
   });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: link.clientId, action: "client.portal_profile_updated", details: "Client updated contact details from the portal" });
+  await syncClientToQuickBooks(req.auth.agencyId, link.clientId).catch(() => null);
   res.json({ success: true, data: client, message: "Your details were updated." });
 }

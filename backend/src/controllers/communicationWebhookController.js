@@ -92,7 +92,9 @@ async function findClient(agencyId, channel, senderAddress) {
       agencyId,
       OR: [
         { phoneNormalized: normalized },
+        { secondaryPhoneNormalized: normalized },
         { phone: { equals: senderAddress, mode: "insensitive" } },
+        { secondaryPhone: { equals: senderAddress, mode: "insensitive" } },
       ],
     },
   });
@@ -100,10 +102,16 @@ async function findClient(agencyId, channel, senderAddress) {
 
   // Support older client rows created before canonical phone storage was added.
   const legacyCandidates = await prisma.client.findMany({
-    where: { agencyId, phoneNormalized: null, phone: { not: null } },
+    where: {
+      agencyId,
+      OR: [
+        { phoneNormalized: null, phone: { not: null } },
+        { secondaryPhoneNormalized: null, secondaryPhone: { not: null } },
+      ],
+    },
   });
   return legacyCandidates.find(
-    (client) => normalizeCommunicationPhone(client.phone) === normalized,
+    (client) => [client.phone, client.secondaryPhone].some((phone) => normalizeCommunicationPhone(phone) === normalized),
   ) || null;
 }
 

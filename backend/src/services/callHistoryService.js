@@ -5,18 +5,24 @@ import { notifyUsers } from "./notificationService.js";
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 export async function phoneMatches(tx, agencyId, normalizedPhone, rawPhone = null) {
   if (!normalizedPhone) return { clients: [], leads: [] };
-  const phoneWhere = [
+  const clientPhoneWhere = [
+    { phoneNormalized: normalizedPhone },
+    { secondaryPhoneNormalized: normalizedPhone },
+    ...(rawPhone ? [{ phone: { equals: rawPhone, mode: "insensitive" } }] : []),
+    ...(rawPhone ? [{ secondaryPhone: { equals: rawPhone, mode: "insensitive" } }] : []),
+  ];
+  const leadPhoneWhere = [
     { phoneNormalized: normalizedPhone },
     ...(rawPhone ? [{ phone: { equals: rawPhone, mode: "insensitive" } }] : []),
   ];
   const [clients, leads] = await Promise.all([
     tx.client.findMany({
-      where: { agencyId, OR: phoneWhere },
+      where: { agencyId, OR: clientPhoneWhere },
       select: { id: true, assignedUserId: true },
       take: 3,
     }),
     tx.lead.findMany({
-      where: { agencyId, OR: phoneWhere, deletedAt: null },
+      where: { agencyId, OR: leadPhoneWhere, deletedAt: null },
       select: { id: true, ownerUserId: true, status: true, pipelineSegment: true },
       take: 3,
     }),

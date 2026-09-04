@@ -63,7 +63,6 @@ function AddressBook({ onPick }) {
   const clients = rows.clients || [];
   const leads = rows.leads || [];
   const total = clients.length + leads.length;
-  const withPhone = (row) => String(row.phone || "").replace(/\D/g, "").length >= 7;
 
   return (
     <div className={panel}>
@@ -90,10 +89,10 @@ function AddressBook({ onPick }) {
           ) : (
             <div className="divide-y divide-slate-100">
               {clients.map((client) => (
-                <ContactRow key={`c:${client.id}`} row={client} kind="Client" reference={client.clientNumber} onCall={withPhone(client) ? () => onPick(client.phone, client.fullName) : null} />
+                <ContactRow key={`c:${client.id}`} row={client} kind="Client" reference={client.clientNumber} onCall={(phone) => onPick(phone, client.fullName)} />
               ))}
               {leads.map((lead) => (
-                <ContactRow key={`l:${lead.id}`} row={lead} kind="Lead" reference={lead.leadNumber} onCall={withPhone(lead) ? () => onPick(lead.phone, lead.fullName) : null} />
+                <ContactRow key={`l:${lead.id}`} row={lead} kind="Lead" reference={lead.leadNumber} onCall={(phone) => onPick(phone, lead.fullName)} />
               ))}
             </div>
           )}
@@ -104,17 +103,23 @@ function AddressBook({ onPick }) {
 }
 
 function ContactRow({ row, kind, reference, onCall }) {
-  const phone = String(row.phone || "");
-  const short = phone.length > 12 ? `${phone.slice(0, 2)} ${phone.slice(2)}` : phone;
+  const phones = [
+    { label: "Primary", value: String(row.phone || "") },
+    { label: "Secondary", value: String(row.secondaryPhone || "") },
+  ].filter((phone) => phone.value.replace(/\D/g, "").length >= 7);
   return (
     <div className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-slate-50 sm:px-6">
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold ${kind === "Client" ? "bg-blue-50 text-blue-700" : "bg-emerald-50 text-emerald-700"}`} aria-hidden="true">{kind.slice(0, 1)}</span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-slate-900">{row.fullName || reference}</p>
-        <p className="mt-0.5 truncate text-xs text-slate-500">{kind} · {reference || ""}{phone ? ` · ${short}` : ""}</p>
+        <p className="mt-0.5 truncate text-xs text-slate-500">{kind} · {reference || ""}{phones.length ? ` · ${phones.map((phone) => `${phone.label}: ${phone.value}`).join(" · ")}` : ""}</p>
       </div>
-      {onCall ? (
-        <button type="button" onClick={onCall} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[#007AFF] px-4 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)] transition hover:bg-[#0873df] active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" />Call</button>
+      {phones.length ? (
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          {phones.map((phone) => (
+            <button key={phone.label} type="button" onClick={() => onCall(phone.value)} aria-label={`Call ${row.fullName || reference} on ${phone.label.toLowerCase()} phone`} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[#007AFF] px-4 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)] transition hover:bg-[#0873df] active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" />{phones.length > 1 ? phone.label : "Call"}</button>
+          ))}
+        </div>
       ) : (
         <span className="text-[11px] font-semibold text-slate-400">No phone</span>
       )}

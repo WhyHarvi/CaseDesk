@@ -343,11 +343,12 @@ export function isQuickBooksDuplicateNameError(error) {
     || String(error?.message || "").toLowerCase().includes("duplicate name");
 }
 
-function customerFieldPayload({ displayName, email, phone, addressLine1 }) {
+function customerFieldPayload({ displayName, email, phone, alternatePhone, addressLine1 }) {
   return {
     DisplayName: displayName,
     ...(email ? { PrimaryEmailAddr: { Address: email } } : {}),
     ...(phone ? { PrimaryPhone: { FreeFormNumber: phone } } : {}),
+    ...(alternatePhone ? { AlternatePhone: { FreeFormNumber: alternatePhone } } : {}),
     ...(addressLine1 ? { BillAddr: { Line1: addressLine1 } } : {}),
   };
 }

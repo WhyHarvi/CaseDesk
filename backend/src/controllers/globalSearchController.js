@@ -217,8 +217,12 @@ async function searchInternalRecords(req, query, digits, access) {
       { clientNumber: { contains: query, mode: "insensitive" } },
       { email: { contains: query, mode: "insensitive" } },
       { phone: { contains: query, mode: "insensitive" } },
+      { secondaryPhone: { contains: query, mode: "insensitive" } },
       ...(digits.length >= 3
-        ? [{ phoneNormalized: { contains: digits } }]
+        ? [
+            { phoneNormalized: { contains: digits } },
+            { secondaryPhoneNormalized: { contains: digits } },
+          ]
         : []),
     ],
   };
@@ -270,6 +274,7 @@ async function searchInternalRecords(req, query, digits, access) {
           clientNumber: true,
           email: true,
           phone: true,
+          secondaryPhone: true,
           status: true,
           archivedAt: true,
         },
@@ -419,7 +424,7 @@ async function searchInternalRecords(req, query, digits, access) {
       id: client.id,
       type: "client",
       title: client.fullName,
-      subtitle: join(client.clientNumber, client.email || client.phone),
+      subtitle: join(client.clientNumber, client.email, client.phone, client.secondaryPhone),
       meta: client.archivedAt ? "Archived" : client.status,
       url: `/app/clients/${client.id}`,
     })),

@@ -499,10 +499,10 @@ export default function ClientProfile() {
     if (initialChatConversationId) setChatOpen(true);
   }, [initialChatConversationId]);
 
-  function startClientCall() {
-    if (!client?.phone) return;
+  function startClientCall(number = client?.phone) {
+    if (!number) return;
     setCallError("");
-    openGlobalDialpad(client.phone, { clientId: client.id, clientName: client.fullName });
+    openGlobalDialpad(number, { clientId: client.id, clientName: client.fullName });
   }
 
   const isEditingNote = Boolean(editingNote);
@@ -1073,12 +1073,22 @@ export default function ClientProfile() {
                   <QuickActionLink
                     href={client.phone ? `tel:${client.phone}` : "#"}
                     icon={Phone}
-                    label={client.phone || "No mobile on file"}
+                    label={client.phone ? `Primary: ${client.phone}` : "No primary phone on file"}
                     disabled={!client.phone}
                     tone="phone"
-                    onClick={softphoneStatus === "ready" && client.phone ? startClientCall : undefined}
+                    onClick={softphoneStatus === "ready" && client.phone ? () => startClientCall(client.phone) : undefined}
                     copyValue={client.phone || null}
                   />
+                  {client.secondaryPhone ? (
+                    <QuickActionLink
+                      href={`tel:${client.secondaryPhone}`}
+                      icon={Phone}
+                      label={`Secondary: ${client.secondaryPhone}`}
+                      tone="phone"
+                      onClick={softphoneStatus === "ready" ? () => startClientCall(client.secondaryPhone) : undefined}
+                      copyValue={client.secondaryPhone}
+                    />
+                  ) : null}
                   <QuickActionLink
                     href={client.phone ? `https://wa.me/${client.phone.replace(/[^\d]/g, "")}` : "#"}
                     icon={Smartphone}

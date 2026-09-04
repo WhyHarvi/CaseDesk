@@ -15,6 +15,7 @@ function customerFields(client, { includeDisplayName = true } = {}) {
     ...(includeDisplayName ? { displayName: client.fullName } : {}),
     email: client.email || null,
     phone: client.phone || null,
+    alternatePhone: client.secondaryPhone || null,
     addressLine1: client.address || null,
   };
 }

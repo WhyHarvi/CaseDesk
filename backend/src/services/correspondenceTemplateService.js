@@ -107,7 +107,7 @@ export function renderCorrespondenceHtml(contentHtml, context) {
   const { agency, caseItem, client, consultant } = context;
   const values = {
     "agency.name": agency?.name, "agency.address": agency?.address, "agency.phone": agency?.phone, "agency.email": agency?.email, "agency.logoUrl": agencyLogoUrl(agency),
-    "client.fullName": client?.fullName, "client.address": client?.address, "client.phone": client?.phone, "client.email": client?.email, "client.dateOfBirth": client?.dateOfBirth ? new Date(client.dateOfBirth).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" }) : null,
+    "client.fullName": client?.fullName, "client.address": client?.address, "client.phone": client?.phone, "client.secondaryPhone": client?.secondaryPhone, "client.email": client?.email, "client.dateOfBirth": client?.dateOfBirth ? new Date(client.dateOfBirth).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" }) : null,
     "consultant.fullName": consultant?.fullName, "consultant.email": consultant?.email, "consultant.phone": consultant?.phone, "consultant.licenseNumber": consultant?.licenseNumber,
     // The agency's designated owner/signing authority (Settings > Workspace
     // Profile) — a fixed identity independent of whichever staff member is

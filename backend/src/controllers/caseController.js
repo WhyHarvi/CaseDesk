@@ -27,6 +27,7 @@ const include = {
       familyName: true,
       givenNames: true,
       phone: true,
+      secondaryPhone: true,
       email: true,
       dateOfBirth: true,
       address: true,

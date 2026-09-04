@@ -98,13 +98,15 @@ export async function syncAgencyTwilioSmsHistory(agencyId, { publicBase = null }
   }
 
   const remoteClients = await prisma.client.findMany({
-    where: { agencyId, phone: { not: null } },
-    select: { id: true, phone: true, phoneNormalized: true, assignedUserId: true },
+    where: { agencyId, OR: [{ phone: { not: null } }, { secondaryPhone: { not: null } }] },
+    select: { id: true, phone: true, phoneNormalized: true, secondaryPhone: true, secondaryPhoneNormalized: true, assignedUserId: true },
   });
   const clientsByPhone = new Map();
   remoteClients.forEach((item) => {
-    const phone = normalizeCommunicationPhone(item.phoneNormalized || item.phone);
-    if (phone && !clientsByPhone.has(phone)) clientsByPhone.set(phone, item);
+    for (const value of [item.phoneNormalized || item.phone, item.secondaryPhoneNormalized || item.secondaryPhone]) {
+      const phone = normalizeCommunicationPhone(value);
+      if (phone && !clientsByPhone.has(phone)) clientsByPhone.set(phone, item);
+    }
   });
   const owner = await prisma.user.findFirst({
     where: { agencyId, status: "active" },

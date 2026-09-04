@@ -101,9 +101,11 @@ export default function QuickCreateCurtains({ kind, onClose }) {
     if (kind !== "client") return undefined;
     const email = clientForm.email.trim();
     const phone = clientForm.phone.trim();
+    const secondaryPhone = clientForm.secondaryPhone.trim();
     const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     const validPhone = phone.replace(/\D/g, "").length >= 7;
-    if (!validEmail && !validPhone) {
+    const validSecondaryPhone = secondaryPhone.replace(/\D/g, "").length >= 7;
+    if (!validEmail && !validPhone && !validSecondaryPhone) {
       setContactMatches([]);
       setCaseEasyMatches([]);
       setCheckingContact(false);
@@ -112,7 +114,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
     let active = true;
     setCheckingContact(true);
     const timer = window.setTimeout(() => {
-      api.get("/clients/contact-matches", { params: { ...(validEmail ? { email } : {}), ...(validPhone ? { phone } : {}) } })
+      api.get("/clients/contact-matches", { params: { ...(validEmail ? { email } : {}), ...(validPhone ? { phone } : {}), ...(validSecondaryPhone ? { secondaryPhone } : {}) } })
         .then((response) => {
           if (!active) return;
           setContactMatches(response.data.data?.clients || []);
@@ -122,7 +124,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
         .finally(() => { if (active) setCheckingContact(false); });
     }, 350);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [clientForm.email, clientForm.phone, kind]);
+  }, [clientForm.email, clientForm.phone, clientForm.secondaryPhone, kind]);
 
   function close() {
     setClosing(true);
@@ -165,8 +167,8 @@ export default function QuickCreateCurtains({ kind, onClose }) {
         setDobError(nextDobError);
         throw new Error("Correct the highlighted date of birth before saving.");
       }
-      const payload = { ...clientForm, givenNames: clientForm.givenNames.trim(), familyName: clientForm.familyName.trim(), email: clientForm.email.trim(), phone: clientForm.phone.trim(), address: clientForm.address.trim(), assignedUserId: clientForm.assignedUserId || "", idempotencyKey: clientKey };
-      ["email", "phone", "address", "dateOfBirth", "identificationExpiryDate"].forEach((field) => { if (!payload[field]) delete payload[field]; });
+      const payload = { ...clientForm, givenNames: clientForm.givenNames.trim(), familyName: clientForm.familyName.trim(), email: clientForm.email.trim(), phone: clientForm.phone.trim(), secondaryPhone: clientForm.secondaryPhone.trim(), address: clientForm.address.trim(), assignedUserId: clientForm.assignedUserId || "", idempotencyKey: clientKey };
+      ["email", "phone", "secondaryPhone", "address", "dateOfBirth", "identificationExpiryDate"].forEach((field) => { if (!payload[field]) delete payload[field]; });
       const response = await api.post("/clients", payload);
       onClose();
       navigate(`/app/clients/${encodeURIComponent(response.data.data.id)}`);

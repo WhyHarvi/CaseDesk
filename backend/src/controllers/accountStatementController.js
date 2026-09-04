@@ -20,7 +20,7 @@ import { applyLocalCashToInvoice } from "../services/paymentApprovalLedgerServic
 async function getScopedClient(req) {
   const client = await prisma.client.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
-    select: { id: true, fullName: true, email: true, emailNormalized: true, phone: true, phoneNormalized: true, qbCustomerId: true },
+    select: { id: true, fullName: true, email: true, emailNormalized: true, phone: true, phoneNormalized: true, secondaryPhone: true, secondaryPhoneNormalized: true, qbCustomerId: true },
   });
   if (!client) throw createHttpError(404, "Client not found");
   return client;
@@ -41,8 +41,10 @@ function normalizedPhone(value) {
 
 function clientAppointmentContactWhere(client) {
   const email = normalizedEmail(client.emailNormalized || client.email);
-  const phone = normalizedPhone(client.phoneNormalized || client.phone);
-  const phoneValues = [...new Set([client.phone, client.phoneNormalized, phone].filter(Boolean))];
+  const phones = [client.phoneNormalized || client.phone, client.secondaryPhoneNormalized || client.secondaryPhone]
+    .map(normalizedPhone)
+    .filter(Boolean);
+  const phoneValues = [...new Set([client.phone, client.phoneNormalized, client.secondaryPhone, client.secondaryPhoneNormalized, ...phones].filter(Boolean))];
   return [
     { clientId: client.id },
     ...(email ? [{ clientId: null, guestEmailNormalized: email }] : []),
@@ -52,12 +54,14 @@ function clientAppointmentContactWhere(client) {
 
 function appointmentContactMatchesClient(appointment, client) {
   const clientEmail = normalizedEmail(client.emailNormalized || client.email);
-  const clientPhone = normalizedPhone(client.phoneNormalized || client.phone);
+  const clientPhones = [client.phoneNormalized || client.phone, client.secondaryPhoneNormalized || client.secondaryPhone]
+    .map(normalizedPhone)
+    .filter(Boolean);
   const guestEmail = normalizedEmail(appointment.guestEmailNormalized || appointment.guestEmail);
   const guestPhone = normalizedPhone(appointment.guestPhone);
   return Boolean(
     (clientEmail && clientEmail === guestEmail)
-    || (clientPhone && clientPhone === guestPhone),
+    || (guestPhone && clientPhones.includes(guestPhone)),
   );
 }
 

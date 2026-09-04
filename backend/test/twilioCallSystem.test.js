@@ -398,8 +398,9 @@ test("the clients UI calls clients through the softphone too, with the same outc
   assert.match(clientsPage, /onCall=\{\(\) => startCall\(client\)}/);
   // Profile header phone action uses that same pre-call dialpad when ready.
   assert.match(profilePage, /useSoftphone\(\)/);
-  assert.match(profilePage, /openGlobalDialpad\(client\.phone, \{ clientId: client\.id, clientName: client\.fullName }/);
-  assert.match(profilePage, /onClick=\{softphoneStatus === "ready" && client\.phone \? startClientCall : undefined}/);
+  assert.match(profilePage, /openGlobalDialpad\(number, \{ clientId: client\.id, clientName: client\.fullName }/);
+  assert.match(profilePage, /onClick=\{softphoneStatus === "ready" && client\.phone \? \(\) => startClientCall\(client\.phone\) : undefined}/);
+  assert.match(profilePage, /startClientCall\(client\.secondaryPhone\)/);
   // The popup keeps the follow-up option lead-only — client calls record the
   // outcome on the call and the client's communication thread instead.
   const provider = await source("../../frontend/src/components/calls/SoftphoneProvider.jsx");

@@ -148,15 +148,15 @@ async function addMatchSummaries(data, agencyId) {
       select: { id: true, leadNumber: true, firstName: true, lastName: true, phoneNormalized: true, status: true, pipelineSegment: true },
     }),
     prisma.client.findMany({
-      where: { agencyId, phoneNormalized: { in: numbers } },
-      select: { id: true, clientNumber: true, fullName: true, phoneNormalized: true, status: true },
+      where: { agencyId, OR: [{ phoneNormalized: { in: numbers } }, { secondaryPhoneNormalized: { in: numbers } }] },
+      select: { id: true, clientNumber: true, fullName: true, phoneNormalized: true, secondaryPhoneNormalized: true, status: true },
     }),
   ]);
   return data.map((item) => ({
     ...item,
     matchSummary: {
       leads: leads.filter((lead) => lead.phoneNormalized === item.remoteNumberNormalized).map((lead) => ({ ...lead, fullName: leadName(lead) })),
-      clients: clients.filter((client) => client.phoneNormalized === item.remoteNumberNormalized),
+      clients: clients.filter((client) => [client.phoneNormalized, client.secondaryPhoneNormalized].includes(item.remoteNumberNormalized)),
     },
   }));
 }
@@ -527,9 +527,9 @@ export async function listCallCandidates(req, res) {
     prisma.client.findMany({
       where: {
         agencyId: req.auth.agencyId,
-        AND: [clientScope, ...(search ? [{ OR: [{ clientNumber: { contains: search, mode: "insensitive" } }, { fullName: { contains: search, mode: "insensitive" } }, { phone: { contains: digits || search, mode: "insensitive" } }, { email: { contains: search, mode: "insensitive" } }] }] : [])],
+        AND: [clientScope, ...(search ? [{ OR: [{ clientNumber: { contains: search, mode: "insensitive" } }, { fullName: { contains: search, mode: "insensitive" } }, { phone: { contains: digits || search, mode: "insensitive" } }, { secondaryPhone: { contains: digits || search, mode: "insensitive" } }, { phoneNormalized: { contains: digits || search } }, { secondaryPhoneNormalized: { contains: digits || search } }, { email: { contains: search, mode: "insensitive" } }] }] : [])],
       },
-      select: { id: true, clientNumber: true, fullName: true, phone: true, email: true, status: true },
+      select: { id: true, clientNumber: true, fullName: true, phone: true, secondaryPhone: true, email: true, status: true },
       orderBy: { updatedAt: "desc" },
       take: 12,
     }),

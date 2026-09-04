@@ -17,12 +17,18 @@ test("client contact normalization detects equivalent phone and email formats", 
 test("live client-match normalization ignores incomplete contact input", () => {
   assert.deepEqual(normalizeContactMatchInput({ phone: "416", email: "person@" }), {
     phoneNormalized: null,
+    secondaryPhoneNormalized: null,
     emailNormalized: null,
   });
   assert.deepEqual(normalizeContactMatchInput({ phone: "(416) 555-0100", email: " PERSON@EXAMPLE.CA " }), {
     phoneNormalized: "+14165550100",
+    secondaryPhoneNormalized: null,
     emailNormalized: "person@example.ca",
   });
+  assert.equal(
+    normalizeContactMatchInput({ secondaryPhone: "+1 647 555 0101" }).secondaryPhoneNormalized,
+    "+16475550101",
+  );
 });
 
 test("duplicate checks cover both existing clients and active leads", async () => {
@@ -43,6 +49,40 @@ test("duplicate checks cover both existing clients and active leads", async () =
     () => assertNoContactDuplicate(leadDb, { agencyId: "agency-1", emailNormalized: "lead@example.ca" }),
     (error) => error.code === "DUPLICATE_LEAD" && error.statusCode === 409,
   );
+});
+
+test("secondary client phones participate in cross-field duplicate checks", async () => {
+  let clientWhere;
+  let leadWhere;
+  const db = {
+    client: {
+      findFirst: async ({ where }) => {
+        clientWhere = where;
+        return null;
+      },
+    },
+    lead: {
+      findFirst: async ({ where }) => {
+        leadWhere = where;
+        return null;
+      },
+    },
+  };
+  await assertNoContactDuplicate(db, {
+    agencyId: "agency-1",
+    phoneNormalized: "+14165550100",
+    secondaryPhoneNormalized: "+16475550101",
+  });
+  assert.deepEqual(clientWhere.OR, [
+    { phoneNormalized: "+14165550100" },
+    { secondaryPhoneNormalized: "+14165550100" },
+    { phoneNormalized: "+16475550101" },
+    { secondaryPhoneNormalized: "+16475550101" },
+  ]);
+  assert.deepEqual(leadWhere.AND[0].OR, [
+    { phoneNormalized: "+14165550100" },
+    { phoneNormalized: "+16475550101" },
+  ]);
 });
 
 test("a converted lead does not block edits to its own client", async () => {
@@ -112,6 +152,7 @@ test("database constraints and transactions protect client intake from races", a
     source("../src/modules/leads/lead.service.js"),
   ]);
   assert.match(schema, /@@unique\(\[agencyId, phoneNormalized\]\)/);
+  assert.match(schema, /@@unique\(\[agencyId, secondaryPhoneNormalized\]\)/);
   assert.match(schema, /@@unique\(\[agencyId, emailNormalized\]\)/);
   assert.match(migration, /CREATE UNIQUE INDEX "clients_agency_id_phone_normalized_key"/);
   assert.match(clientController, /lockAgencyContactIntake/);

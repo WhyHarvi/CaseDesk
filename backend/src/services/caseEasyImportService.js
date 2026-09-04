@@ -444,7 +444,7 @@ export async function linkImportedContactsToExistingClients(agencyId, db = prism
     }),
     db.client.findMany({
       where: { agencyId, archivedAt: null },
-      select: { id: true, emailNormalized: true, phoneNormalized: true },
+      select: { id: true, emailNormalized: true, phoneNormalized: true, secondaryPhoneNormalized: true },
     }),
   ]);
   const byEmail = new Map();
@@ -458,6 +458,7 @@ export async function linkImportedContactsToExistingClients(agencyId, db = prism
   for (const client of clients) {
     add(byEmail, normalizeKey(client.emailNormalized), client);
     add(byPhone, normalizePhoneKey(client.phoneNormalized), client);
+    add(byPhone, normalizePhoneKey(client.secondaryPhoneNormalized), client);
   }
 
   let linked = 0;

@@ -250,7 +250,7 @@ export default function GlobalDialpad() {
       .then((response) => {
         if (cancelled) return;
         const data = response.data?.data || {};
-        const client = (data.clients || []).find((row) => phoneMatchKey(row.phoneNormalized || row.phone) === matchKey);
+        const client = (data.clients || []).find((row) => [row.phoneNormalized || row.phone, row.secondaryPhoneNormalized || row.secondaryPhone].some((phone) => phoneMatchKey(phone) === matchKey));
         const lead = (data.leads || []).find((row) => phoneMatchKey(row.phoneNormalized || row.phone) === matchKey);
         if (client) setLinkedRecord({ type: "client", id: client.id, name: client.fullName || "" });
         else if (lead) setLinkedRecord({ type: "lead", id: lead.id, name: lead.fullName || "" });

@@ -1226,19 +1226,23 @@ export async function listTwilioAddressBook(agencyId, { search = "" } = {}) {
   // active call can resolve to its Lead/Client instead of leaving contextual
   // controls such as Notes unavailable.
   const phoneNeedles = [...new Set([digits, digits.length > 10 ? digits.slice(-10) : ""].filter(Boolean))];
-  const matches = (fields) => [
+  const matches = (fields, { includeSecondary = false } = {}) => [
     ...(needle
       ? fields.map((field) => ({ [field]: { contains: needle, mode: "insensitive" } }))
       : []),
     ...phoneNeedles.flatMap((phoneNeedle) => [
       { phone: { contains: phoneNeedle, mode: "insensitive" } },
       { phoneNormalized: { contains: phoneNeedle, mode: "insensitive" } },
+      ...(includeSecondary ? [
+        { secondaryPhone: { contains: phoneNeedle, mode: "insensitive" } },
+        { secondaryPhoneNormalized: { contains: phoneNeedle, mode: "insensitive" } },
+      ] : []),
     ]),
   ];
   const [clients, leads] = await Promise.all([
     prisma.client.findMany({
-      where: { agencyId, ...(matches(["fullName", "clientNumber"]).length ? { OR: matches(["fullName", "clientNumber"]) } : {}) },
-      select: { id: true, clientNumber: true, fullName: true, phone: true, phoneNormalized: true, status: true },
+      where: { agencyId, ...(matches(["fullName", "clientNumber"], { includeSecondary: true }).length ? { OR: matches(["fullName", "clientNumber"], { includeSecondary: true }) } : {}) },
+      select: { id: true, clientNumber: true, fullName: true, phone: true, phoneNormalized: true, secondaryPhone: true, secondaryPhoneNormalized: true, status: true },
       orderBy: { fullName: "asc" },
       take: 200,
     }),

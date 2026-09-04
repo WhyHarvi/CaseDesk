@@ -104,6 +104,7 @@ const clientIdentitySelect = {
   familyName: true,
   givenNames: true,
   phone: true,
+  secondaryPhone: true,
   email: true,
   dateOfBirth: true,
   maritalStatus: true,
@@ -129,6 +130,7 @@ const fields = {
   familyName: fieldParsers.stringField,
   givenNames: fieldParsers.stringField,
   phone: fieldParsers.stringField,
+  secondaryPhone: fieldParsers.stringField,
   email: fieldParsers.stringField,
   dateOfBirth: fieldParsers.dateField,
   address: fieldParsers.stringField,
@@ -696,14 +698,17 @@ export async function listClients(req, res) {
     .slice(0, 200);
   const searchDigits = search.replace(/\D/g, "");
   const searchFields = search
-    ? ["fullName", "email", "emailNormalized", "phone", "clientNumber"].map(
+    ? ["fullName", "email", "emailNormalized", "phone", "secondaryPhone", "clientNumber"].map(
         (field) => ({
           [field]: { contains: search, mode: "insensitive" },
         }),
       )
     : [];
   if (searchDigits.length >= 7)
-    searchFields.push({ phoneNormalized: { contains: searchDigits } });
+    searchFields.push(
+      { phoneNormalized: { contains: searchDigits } },
+      { secondaryPhoneNormalized: { contains: searchDigits } },
+    );
   const where = {
     agencyId: req.auth.agencyId,
     ...clientAccessWhere(req),
@@ -843,12 +848,18 @@ async function findCaseEasyContactMatches(req, email, phoneDigits) {
 export async function findClientContactMatches(req, res) {
   const rawEmail = String(req.query.email || "").slice(0, 320).trim().toLowerCase();
   const rawPhone = String(req.query.phone || "").slice(0, 40);
-  const { phoneNormalized, emailNormalized } = normalizeContactMatchInput({
+  const rawSecondaryPhone = String(req.query.secondaryPhone || "").slice(0, 40);
+  const { phoneNormalized, secondaryPhoneNormalized, emailNormalized } = normalizeContactMatchInput({
     phone: rawPhone,
+    secondaryPhone: rawSecondaryPhone,
     email: rawEmail,
   });
+  const submittedPhones = [...new Set([phoneNormalized, secondaryPhoneNormalized].filter(Boolean))];
   const contact = [
-    ...(phoneNormalized ? [{ phoneNormalized }] : []),
+    ...submittedPhones.flatMap((normalized) => [
+      { phoneNormalized: normalized },
+      { secondaryPhoneNormalized: normalized },
+    ]),
     ...(emailNormalized ? [{ emailNormalized }] : []),
   ];
   if (!contact.length) return res.json({ data: { clients: [], caseEasyContacts: [] } });
@@ -867,6 +878,8 @@ export async function findClientContactMatches(req, res) {
         emailNormalized: true,
         phone: true,
         phoneNormalized: true,
+        secondaryPhone: true,
+        secondaryPhoneNormalized: true,
         status: true,
         archivedAt: true,
       },
@@ -880,8 +893,8 @@ export async function findClientContactMatches(req, res) {
       clients: clients.map((client) => ({
         ...client,
         matchedBy: [
-          client.emailNormalized === emailNormalized ? "email" : null,
-          client.phoneNormalized === phoneNormalized ? "phone" : null,
+          emailNormalized && client.emailNormalized === emailNormalized ? "email" : null,
+          submittedPhones.includes(client.phoneNormalized) || submittedPhones.includes(client.secondaryPhoneNormalized) ? "phone" : null,
         ].filter(Boolean),
         canBookAppointment: !client.archivedAt,
       })),
@@ -930,6 +943,12 @@ export function clientPayload(body, existing = null) {
     phone: Object.hasOwn(body, "phone") ? body.phone : existing?.phone,
     email: Object.hasOwn(body, "email") ? body.email : existing?.email,
   });
+  const secondaryContact = normalizeContact({
+    phone: Object.hasOwn(body, "secondaryPhone") ? body.secondaryPhone : existing?.secondaryPhone,
+  });
+  if (contact.phoneNormalized && secondaryContact.phoneNormalized === contact.phoneNormalized) {
+    throw createHttpError(400, "Primary and secondary phone numbers must be different.", "VALIDATION_ERROR");
+  }
   // Leads have their own pipeline and Lead model. A row created through
   // the Clients screen is already a client, even when it has no case yet;
   // defaulting it back to the legacy "Lead" client status makes successful
@@ -999,6 +1018,8 @@ export function clientPayload(body, existing = null) {
     familyName,
     givenNames,
     ...contact,
+    secondaryPhone: secondaryContact.phone,
+    secondaryPhoneNormalized: secondaryContact.phoneNormalized,
     dateOfBirth,
     maritalStatus,
     address,
@@ -1118,6 +1139,7 @@ export async function updateClient(req, res) {
       await lockAgencyContactIntake(tx, req.auth.agencyId);
       const contactChanged =
         payload.phoneNormalized !== existing.phoneNormalized ||
+        payload.secondaryPhoneNormalized !== existing.secondaryPhoneNormalized ||
         payload.emailNormalized !== existing.emailNormalized;
       if (contactChanged)
         await assertNoContactDuplicate(tx, {
@@ -1164,7 +1186,7 @@ export async function updateClient(req, res) {
         actionUrl: `/app/clients/${data.id}`,
         dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}:${data.updatedAt.toISOString()}`,
       });
-    const contactChanged = ["fullName", "email", "phone", "address"].some(
+    const contactChanged = ["fullName", "email", "phone", "secondaryPhone", "address"].some(
       (field) =>
         Object.hasOwn(payload, field) && payload[field] !== existing[field],
     );

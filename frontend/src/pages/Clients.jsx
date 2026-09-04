@@ -34,6 +34,7 @@ export const defaultClientFormState = {
   familyName: "",
   email: "",
   phone: "",
+  secondaryPhone: "",
   dateOfBirth: "",
   address: "",
   preferredLanguage: "",
@@ -413,14 +414,29 @@ export function ClientDrawer({
 
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">
-                    Phone
+                    Primary phone
                   </span>
                   <input
+                    type="tel"
                     name="phone"
                     value={formState.phone}
                     onChange={onChange}
                     className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
                     placeholder="+1 416 555 0100"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Secondary phone <span className="font-normal text-slate-400">(optional)</span>
+                  </span>
+                  <input
+                    type="tel"
+                    name="secondaryPhone"
+                    value={formState.secondaryPhone}
+                    onChange={onChange}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                    placeholder="Backup or alternate number"
                   />
                 </label>
 
@@ -437,7 +453,7 @@ export function ClientDrawer({
                             <div key={client.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white px-3.5 py-2.5 shadow-sm">
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-semibold text-slate-900">{client.fullName}</p>
-                                <p className="mt-0.5 truncate text-[11px] text-slate-500">{[client.clientNumber, client.email, client.phone].filter(Boolean).join(" · ")}</p>
+                                <p className="mt-0.5 truncate text-[11px] text-slate-500">{[client.clientNumber, client.email, client.phone, client.secondaryPhone].filter(Boolean).join(" · ")}</p>
                                 <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-sky-600">Matched {client.matchedBy.join(" and ")}{client.archivedAt ? " · Archived profile" : ""}</p>
                               </div>
                               <div className="flex shrink-0 gap-2">
@@ -833,7 +849,7 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
               </Link>
               {client.caseEasyImportContacts?.length ? <CaseEasyOriginBadge /> : null}
             </div>
-            <p className="text-sm text-slate-500">{client.email || client.phone || "No contact on file"}</p>
+            <p className="text-sm text-slate-500">{[client.email, client.phone, client.secondaryPhone].filter(Boolean).join(" · ") || "No contact on file"}</p>
             <p className="text-xs text-slate-400">{client.fileNumber}</p>
           </div>
         </div>
@@ -992,9 +1008,11 @@ export default function Clients() {
     }
     const email = formState.email.trim();
     const phone = formState.phone.trim();
+    const secondaryPhone = formState.secondaryPhone.trim();
     const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     const validPhone = phone.replace(/\D/g, "").length >= 7;
-    if (!validEmail && !validPhone) {
+    const validSecondaryPhone = secondaryPhone.replace(/\D/g, "").length >= 7;
+    if (!validEmail && !validPhone && !validSecondaryPhone) {
       setContactMatches([]);
       setCaseEasyMatches([]);
       setCheckingContact(false);
@@ -1010,6 +1028,7 @@ export default function Clients() {
         params: {
           ...(validEmail ? { email } : {}),
           ...(validPhone ? { phone } : {}),
+          ...(validSecondaryPhone ? { secondaryPhone } : {}),
         },
       })
         .then((response) => {
@@ -1021,7 +1040,7 @@ export default function Clients() {
         .finally(() => { if (active) setCheckingContact(false); });
     }, 350);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [formState.email, formState.phone, isEditing, showForm]);
+  }, [formState.email, formState.phone, formState.secondaryPhone, isEditing, showForm]);
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -1051,6 +1070,8 @@ export default function Clients() {
         client.emailNormalized,
         client.phone,
         client.phoneNormalized,
+        client.secondaryPhone,
+        client.secondaryPhoneNormalized,
         client.fileNumber,
         client.relationshipLabel,
         client.nextAction,
@@ -1061,7 +1082,7 @@ export default function Clients() {
 
       const normalizedQuery = searchQuery.toLowerCase();
       const searchDigits = searchQuery.replace(/\D/g, "");
-      const matchesSearch = !searchQuery || searchHaystack.includes(normalizedQuery) || (searchDigits.length >= 7 && String(client.phoneNormalized || "").includes(searchDigits));
+      const matchesSearch = !searchQuery || searchHaystack.includes(normalizedQuery) || (searchDigits.length >= 7 && [client.phoneNormalized, client.secondaryPhoneNormalized].some((number) => String(number || "").includes(searchDigits)));
       const matchesStatus = statusFilter === "All Statuses" || client.normalizedStatus === statusFilter;
       const matchesCaseType = caseTypeFilter === "All Case Types" || client.caseType === caseTypeFilter;
       const matchesStaff = staffFilter === "All Staff" || client.assignedName === staffFilter;
@@ -1179,6 +1200,7 @@ export default function Clients() {
       familyName: names.familyName,
       email: client.email || "",
       phone: client.phone || "",
+      secondaryPhone: client.secondaryPhone || "",
       dateOfBirth: formatDateForInput(client.dateOfBirth),
       address: client.address || "",
       preferredLanguage: client.preferredLanguage || "",
@@ -1259,6 +1281,7 @@ export default function Clients() {
         familyName: formState.familyName.trim(),
         email: formState.email.trim(),
         phone: formState.phone.trim(),
+        secondaryPhone: formState.secondaryPhone.trim(),
         address: formState.address.trim(),
         assignedUserId: formState.assignedUserId || "",
         ...(!isEditing ? { idempotencyKey: clientCreateIdempotencyKey } : {}),
@@ -1269,7 +1292,7 @@ export default function Clients() {
         delete payload.email;
       }
 
-      if (!payload.phone) {
+      if (!payload.phone && !isEditing) {
         delete payload.phone;
       }
 
@@ -1674,7 +1697,7 @@ export default function Clients() {
                                 </Link>
                                 {client.caseEasyImportContacts?.length ? <CaseEasyOriginBadge /> : null}
                               </div>
-                              <p className="text-slate-500">{client.email || client.phone || "No contact on file"}</p>
+                              <p className="text-slate-500">{[client.email, client.phone, client.secondaryPhone].filter(Boolean).join(" · ") || "No contact on file"}</p>
                               <p className="text-xs text-slate-400">{client.fileNumber}</p>
                             </div>
                             {client.phone ? (

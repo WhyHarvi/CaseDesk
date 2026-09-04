@@ -18,6 +18,7 @@ const REGISTRY = {
   "client.dateOfBirth": (ctx) => formatDate(ctx.client?.dateOfBirth),
   "client.email": (ctx) => ctx.client?.email,
   "client.phone": (ctx) => ctx.client?.phone,
+  "client.secondaryPhone": (ctx) => ctx.client?.secondaryPhone,
   "client.uci": (ctx) => ctx.client?.uci,
   "client.address": (ctx) => ctx.client?.address,
   "client.clientNumber": (ctx) => ctx.client?.clientNumber,

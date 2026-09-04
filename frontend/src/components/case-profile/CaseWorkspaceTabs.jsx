@@ -2571,7 +2571,8 @@ function ProfileDetailsGrid({
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <DetailField label="Full name" value={client.fullName} />
           <DetailField label="Email" value={client.email} />
-          <DetailField label="Mobile no." value={client.phone} />
+          <DetailField label="Primary phone" value={client.phone} />
+          <DetailField label="Secondary phone" value={client.secondaryPhone} />
           <DetailField
             label="Date of birth"
             value={formatDate(client.dateOfBirth)}

@@ -13,6 +13,7 @@ const RULES = [
   { test: /type.?of.?application/i, label: "Type of application", owner: "Case", sourcePath: "case.caseType" },
   { test: /e-?mail/i, label: "Email address", owner: "Client", sourcePath: "client.email" },
   { test: /fax/i, label: "Fax number", owner: "Representative", sourcePath: "agency.faxNumber" },
+  { test: /(secondary|alternate|alternative|backup).*(phone|telephone)|(phone|telephone).*(secondary|alternate|alternative|backup)/i, label: "Secondary telephone number", owner: "Client", sourcePath: "client.secondaryPhone" },
   { test: /phone|telephone/i, label: "Telephone number", owner: "Client", sourcePath: "client.phone" },
   { test: /firm|organi[sz]ation/i, label: "Name of firm or organization", owner: "Representative", sourcePath: "agency.name" },
   { test: /membership|licen[cs]e|rcic|cicc/i, label: "Membership / license number", owner: "Representative", sourcePath: "representative.licenseNumber" },

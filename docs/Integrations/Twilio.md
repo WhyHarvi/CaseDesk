@@ -24,6 +24,9 @@ Agency Account SID/Auth Token and optional API key SID/secret are stored per age
 ## Features Relying On
 [[Communications]], [[Leads]], [[Appointments and Booking]], and [[Follow-Ups and Reminders]].
 
+## Client Phone Handling
+Both primary and secondary client phone numbers resolve inbound calls/SMS, historical sync, caller identity, and address-book search to the same client. Staff may manually call either number. Automated outbound client messaging continues to use the primary phone as the canonical destination.
+
 ## Failure Implications
 Calls/SMS and delivery reconciliation stop or remain pending; incorrect public origin/signature construction rejects legitimate callbacks. The database history remains the CRM source view.
 

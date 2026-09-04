@@ -15,23 +15,41 @@ export function normalizeContact({ phone, email }) {
 // Intake forms call this while a person is still typing. A complete valid
 // contact value is normalized exactly like createClient; incomplete values
 // are ignored instead of turning ordinary keystrokes into validation errors.
-export function normalizeContactMatchInput({ phone, email }) {
+export function normalizeContactMatchInput({ phone, secondaryPhone, email }) {
   let phoneNormalized = null;
+  let secondaryPhoneNormalized = null;
   let emailNormalized = null;
   if (String(phone || "").trim()) {
     try { phoneNormalized = normalizeContact({ phone }).phoneNormalized; }
     catch { phoneNormalized = null; }
   }
+  if (String(secondaryPhone || "").trim()) {
+    try { secondaryPhoneNormalized = normalizeContact({ phone: secondaryPhone }).phoneNormalized; }
+    catch { secondaryPhoneNormalized = null; }
+  }
   if (String(email || "").trim()) {
     try { emailNormalized = normalizeContact({ email }).emailNormalized; }
     catch { emailNormalized = null; }
   }
-  return { phoneNormalized, emailNormalized };
+  return { phoneNormalized, secondaryPhoneNormalized, emailNormalized };
 }
 
-function contactWhere(phoneNormalized, emailNormalized) {
+function clientContactWhere(phoneNormalized, secondaryPhoneNormalized, emailNormalized) {
+  const phones = [...new Set([phoneNormalized, secondaryPhoneNormalized].filter(Boolean))];
   const OR = [
-    ...(phoneNormalized ? [{ phoneNormalized }] : []),
+    ...phones.flatMap((normalized) => [
+      { phoneNormalized: normalized },
+      { secondaryPhoneNormalized: normalized },
+    ]),
+    ...(emailNormalized ? [{ emailNormalized }] : []),
+  ];
+  return OR.length ? { OR } : null;
+}
+
+function leadContactWhere(phoneNormalized, secondaryPhoneNormalized, emailNormalized) {
+  const phones = [...new Set([phoneNormalized, secondaryPhoneNormalized].filter(Boolean))];
+  const OR = [
+    ...phones.map((normalized) => ({ phoneNormalized: normalized })),
     ...(emailNormalized ? [{ emailNormalized }] : []),
   ];
   return OR.length ? { OR } : null;
@@ -44,21 +62,23 @@ export async function lockAgencyContactIntake(tx, agencyId) {
 export async function assertNoContactDuplicate(tx, {
   agencyId,
   phoneNormalized,
+  secondaryPhoneNormalized,
   emailNormalized,
   excludeClientId = null,
   excludeLeadId = null,
 }) {
-  const contact = contactWhere(phoneNormalized, emailNormalized);
-  if (!contact) return;
+  const clientContact = clientContactWhere(phoneNormalized, secondaryPhoneNormalized, emailNormalized);
+  const leadContact = leadContactWhere(phoneNormalized, secondaryPhoneNormalized, emailNormalized);
+  if (!clientContact && !leadContact) return;
 
   const [client, lead] = await Promise.all([
     tx.client.findFirst({
       where: {
         agencyId,
-        ...contact,
+        ...clientContact,
         ...(excludeClientId ? { id: { not: excludeClientId } } : {}),
       },
-      select: { id: true, fullName: true, phoneNormalized: true, emailNormalized: true },
+      select: { id: true, fullName: true, phoneNormalized: true, secondaryPhoneNormalized: true, emailNormalized: true },
     }),
     tx.lead.findFirst({
       where: {
@@ -70,7 +90,7 @@ export async function assertNoContactDuplicate(tx, {
         // lead already linked to it while continuing to catch every other
         // active lead with the same phone or email.
         AND: [
-          contact,
+          leadContact,
           ...(excludeClientId
             ? [
                 {
@@ -106,12 +126,13 @@ export async function assertNoContactDuplicate(tx, {
   ]);
 
   if (client) {
-    const field = phoneNormalized && client.phoneNormalized === phoneNormalized ? "phone number" : "email address";
+    const submittedPhones = new Set([phoneNormalized, secondaryPhoneNormalized].filter(Boolean));
+    const field = submittedPhones.has(client.phoneNormalized) || submittedPhones.has(client.secondaryPhoneNormalized) ? "phone number" : "email address";
     throw createHttpError(409, `A client named ${client.fullName} already uses this ${field}. Open the existing client instead.`, "DUPLICATE_CLIENT");
   }
   if (lead) {
     const name = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.leadNumber;
-    const field = phoneNormalized && lead.phoneNormalized === phoneNormalized ? "phone number" : "email address";
+    const field = [phoneNormalized, secondaryPhoneNormalized].filter(Boolean).includes(lead.phoneNormalized) ? "phone number" : "email address";
     throw createHttpError(409, `Lead ${lead.leadNumber} (${name}) already uses this ${field}. Continue from the existing lead instead.`, "DUPLICATE_LEAD");
   }
 }
