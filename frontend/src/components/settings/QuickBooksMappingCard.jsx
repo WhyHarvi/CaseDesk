@@ -419,7 +419,11 @@ function AdditionalFeeCategories({ items }) {
       .catch((reason) => setError(reason.response?.data?.message || "Fee categories could not be loaded."));
   }, []);
 
-  const shown = (categories || []).filter((category) => !["fees", "disbursement", "consultation"].includes(category.code));
+  // Every built-in category gets its own dedicated picker above (fee,
+  // disbursement, consult, card surcharge, bank transfer fee) — this list
+  // is only for categories the agency creates itself, so a built-in
+  // doesn't show up twice with two controls editing the same mapping.
+  const shown = (categories || []).filter((category) => !["fees", "disbursement", "consultation", "card-surcharge", "bank-transfer-fee"].includes(category.code));
 
   async function addCategory(event) {
     event.preventDefault();
