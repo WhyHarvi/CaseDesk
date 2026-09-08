@@ -21,7 +21,7 @@ test("team members connect a user-owned Microsoft mailbox instead of sharing age
   assert.match(schema, /refreshTokenEncrypted\s+String/);
   assert.match(migration, /CREATE TABLE "user_mailbox_connections"/);
   assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
-  assert.match(routes, /requireRole\("admin", "consultant", "frontdesk"\)/);
+  assert.match(routes, /requireRole\("admin", "consultant", "frontdesk", "manager"\)/);
   assert.match(routes, /\/microsoft\/callback/);
   assert.match(controller, /req\.auth\.userId/);
   assert.match(service, /offline_access/);

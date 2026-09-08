@@ -158,13 +158,13 @@ test("bulk reassign requires at least one target team member", async () => {
   );
 });
 
-test("the reassign-bulk route is admin-only and the standard Leads page wires it up alongside bulk promote", async () => {
+test("the reassign-bulk route is admin/manager oversight and the standard Leads page wires it up alongside bulk promote", async () => {
   const [routes, leadsPage, reassignModal] = await Promise.all([
     readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/modules/leads/pages/LeadsPage.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/modules/leads/components/BulkReassignLeadsModal.jsx", import.meta.url), "utf8"),
   ]);
-  assert.match(routes, /router\.post\("\/reassign-bulk", requireRole\("admin"\), asyncHandler\(bulkReassignLeads\)\)/);
+  assert.match(routes, /router\.post\("\/reassign-bulk", requireRole\("admin", "manager"\), asyncHandler\(bulkReassignLeads\)\)/);
   assert.match(leadsPage, /canBulkReassign = segment === "STANDARD" && role === "admin"/);
   assert.match(leadsPage, /canBulkSelect = canBulkPromote \|\| canBulkReassign/);
   assert.match(reassignModal, /api\.post\("\/leads\/reassign-bulk", \{ leadIds, targetUserIds: \[\.\.\.selectedStaffIds\] \}\)/);

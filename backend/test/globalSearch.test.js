@@ -43,7 +43,7 @@ test("global search is authenticated and available only to staff roles", async (
   );
   assert.match(
     server,
-    /const leadUser = requireRole\("admin", "consultant", "frontdesk"\)/,
+    /const leadUser = requireRole\("admin", "consultant", "frontdesk", "manager"\)/,
   );
   assert.match(routes, /router\.get\("\/", asyncHandler\(globalSearch\)\)/);
 });

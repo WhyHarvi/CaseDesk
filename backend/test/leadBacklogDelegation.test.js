@@ -62,13 +62,13 @@ test("targeted preview filters by owner and performs no writes", async () => {
   assert.equal(db.created.length, 0);
 });
 
-test("delegation endpoint is admin-only and UI explains incentive preservation", async () => {
+test("delegation endpoint is admin/manager oversight and UI explains incentive preservation", async () => {
   const [routes, panel, incentives] = await Promise.all([
     readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/modules/leads/components/LeadRoutingRulesPanel.jsx", import.meta.url), "utf8"),
     readFile(new URL("../src/services/incentiveCreditingService.js", import.meta.url), "utf8"),
   ]);
-  assert.match(routes, /router\.post\("\/delegate-backlog", requireRole\("admin"\), asyncHandler\(delegateLeadBacklog\)\)/);
+  assert.match(routes, /router\.post\("\/delegate-backlog", requireRole\("admin", "manager"\), asyncHandler\(delegateLeadBacklog\)\)/);
   assert.match(panel, /Ownership and incentive credit were preserved/);
   assert.match(incentives, /leadOwnerUserId:\s*lead\?\.ownerUserId/);
 });

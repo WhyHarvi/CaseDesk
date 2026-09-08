@@ -35,6 +35,7 @@ test("required case-team options include active administrators", async () => {
       "admin",
       "consultant",
       "frontdesk",
+      "manager",
     ]);
   }
 });
@@ -48,5 +49,6 @@ test("collaboration staff includes active administrators", async () => {
     "admin",
     "consultant",
     "frontdesk",
+    "manager",
   ]);
 });

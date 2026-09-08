@@ -123,13 +123,14 @@ test("admin workload shows agency consultants, assignments, and unassigned work"
     source("../../frontend/src/components/case-profile/TasksWorkspace.jsx"),
   ]);
 
-  assert.match(routes, /router\.get\("\/consultants\/workload", asyncHandler\(agencyWorkloads\)\)/);
+  // Workload is team oversight — open to admin and manager, not admin-only.
+  assert.match(routes, /router\.get\("\/consultants\/workload", oversight, asyncHandler\(agencyWorkloads\)\)/);
   assert.match(controller, /return \{[\s\S]*summary,[\s\S]*consultants,[\s\S]*unassigned,?[\s\S]*\}/);
   assert.doesNotMatch(controller, /outsideTeam: finalizeBucket|frontDesk: finalizeBucket/);
   // The roster now covers every active staff role, not just consultants —
   // this is the fix for admin-owned work landing in a real per-person
   // bucket instead of the old "outside the consultant roster" catch-all.
-  assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/);
+  assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk", "manager"\] \}/);
   assert.match(controller, /status: \{ in: OPEN_CASE_STATUSES \}/);
   assert.match(controller, /pendingFollowUps: followUps\.length/);
   assert.match(controller, /activeLeads: leads\.length/);

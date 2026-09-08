@@ -791,7 +791,7 @@ test("client billing can record agency fee categories and repair paid appointmen
 
   assert.match(clientRoutes, /billing\/manual-entry-options/);
   assert.match(clientRoutes, /billing\/manual-entry/);
-  assert.match(clientRoutes, /requireRole\("admin", "consultant", "frontdesk"\)/);
+  assert.match(clientRoutes, /requireRole\("admin", "consultant", "frontdesk", "manager"\)/);
   assert.match(controller, /listFeeCategories\(req\.auth\.agencyId\)/);
   assert.match(controller, /entryType === "invoice_payment"/);
   assert.match(controller, /entryType === "appointment_payment"/);

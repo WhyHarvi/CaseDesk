@@ -148,8 +148,11 @@ test("Portal Access is admin-only and wired to both UI and server routes", async
       source("../../frontend/src/components/layout/Sidebar.jsx"),
       source("../src/server.js"),
     ]);
-  assert.match(adminRoutes, /router\.use\(requireRole\("admin"\)\)/);
-  assert.match(adminRoutes, /"\/portal-access"/);
+  // adminRoutes.js is no longer blanket-gated (manager gets oversight on
+  // some routes — see the Manager Role Permissions Proposal decision doc);
+  // portal-access management specifically stays admin-only.
+  assert.match(adminRoutes, /const admin = requireRole\("admin"\);/);
+  assert.match(adminRoutes, /router\.get\("\/portal-access", admin, asyncHandler\(listPortalAccessMembers\)\)/);
   assert.match(adminRoutes, /"\/team-members\/:id\/portal-access"/);
   assert.match(settings, /id: "portal-access"/);
   assert.match(settings, /isAdmin && activeSection === "portal-access"/);

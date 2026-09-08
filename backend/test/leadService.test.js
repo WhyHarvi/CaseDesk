@@ -144,7 +144,7 @@ test("admin transfers a lead to front desk in one action with an automatic audit
   assert.match(calls.find(([kind]) => kind === "audit")[1].details, new RegExp(automaticReason));
   assert.deepEqual(
     calls.find(([kind]) => kind === "ownerLookup")[1].memberships.some.role.in,
-    ["admin", "consultant", "frontdesk"],
+    ["admin", "consultant", "frontdesk", "manager"],
   );
 });
 

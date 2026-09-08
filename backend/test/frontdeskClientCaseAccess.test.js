@@ -39,9 +39,9 @@ test("client write endpoints (update/archive/close) are open to admin/consultant
   // this must never gain a role guard or that flow breaks.
   assert.match(routes, /router\.post\("\/", asyncHandler\(createClient\)\);/);
 
-  assert.match(routes, /router\.patch\("\/:id", requireRole\("admin", "consultant", "frontdesk"\), asyncHandler\(updateClient\)\);/);
-  assert.match(routes, /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant", "frontdesk"\), asyncHandler\(archiveClient\)\);/);
-  assert.match(routes, /router\.patch\("\/:id\/close", requireRole\("admin", "consultant", "frontdesk"\), asyncHandler\(closeClient\)\);/);
+  assert.match(routes, /router\.patch\("\/:id", requireRole\("admin", "consultant", "frontdesk", "manager"\), asyncHandler\(updateClient\)\);/);
+  assert.match(routes, /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant", "frontdesk", "manager"\), asyncHandler\(archiveClient\)\);/);
+  assert.match(routes, /router\.patch\("\/:id\/close", requireRole\("admin", "consultant", "frontdesk", "manager"\), asyncHandler\(closeClient\)\);/);
 });
 
 test("case write endpoints (update/lifecycle/applicants/workflow/ledger) are admin/consultant only — creating a case stays open for front-desk intake", async () => {
@@ -54,26 +54,26 @@ test("case write endpoints (update/lifecycle/applicants/workflow/ledger) are adm
   assert.match(routes, /router\.post\("\/", asyncHandler\(createCaseWithRequiredCollaboration\)\);/);
 
   for (const pattern of [
-    /router\.post\("\/:id\/applicants", requireRole\("admin", "consultant"\), asyncHandler\(createCaseApplicant\)\);/,
-    /router\.patch\("\/:id\/applicants\/:applicantId", requireRole\("admin", "consultant"\), asyncHandler\(updateCaseApplicant\)\);/,
-    /requireRole\("admin", "consultant"\),\n  asyncHandler\(removeCaseApplicant\),/,
-    /requirePortalCaseTab\("profile"\),\n  requireRole\("admin", "consultant"\),\n  asyncHandler\(saveCaseAssessment\),/,
-    /router\.post\(\n  "\/:id\/workflow\/apply-template",\n  requireRole\("admin", "consultant"\),/,
-    /router\.patch\("\/:id\/workflow", requireRole\("admin", "consultant"\), asyncHandler\(saveCaseWorkflow\)\);/,
-    /router\.patch\("\/:id\/workflow\/:stepId", requireRole\("admin", "consultant"\), asyncHandler\(updateCaseWorkflowStep\)\);/,
-    /router\.post\("\/:id\/ledger", requireRole\("admin", "consultant"\), asyncHandler\(createCaseLedgerEntry\)\);/,
-    /router\.patch\("\/:id\/ledger\/:entryId", requireRole\("admin", "consultant"\), asyncHandler\(updateLedgerEntry\)\);/,
-    /router\.delete\("\/:id\/ledger\/:entryId", requireRole\("admin", "consultant"\), asyncHandler\(deleteLedgerEntry\)\);/,
+    /router\.post\("\/:id\/applicants", requireRole\("admin", "consultant", "manager"\), asyncHandler\(createCaseApplicant\)\);/,
+    /router\.patch\("\/:id\/applicants\/:applicantId", requireRole\("admin", "consultant", "manager"\), asyncHandler\(updateCaseApplicant\)\);/,
+    /requireRole\("admin", "consultant", "manager"\),\n  asyncHandler\(removeCaseApplicant\),/,
+    /requirePortalCaseTab\("profile"\),\n  requireRole\("admin", "consultant", "manager"\),\n  asyncHandler\(saveCaseAssessment\),/,
+    /router\.post\(\n  "\/:id\/workflow\/apply-template",\n  requireRole\("admin", "consultant", "manager"\),/,
+    /router\.patch\("\/:id\/workflow", requireRole\("admin", "consultant", "manager"\), asyncHandler\(saveCaseWorkflow\)\);/,
+    /router\.patch\("\/:id\/workflow\/:stepId", requireRole\("admin", "consultant", "manager"\), asyncHandler\(updateCaseWorkflowStep\)\);/,
+    /router\.post\("\/:id\/ledger", requireRole\("admin", "consultant", "manager"\), asyncHandler\(createCaseLedgerEntry\)\);/,
+    /router\.patch\("\/:id\/ledger\/:entryId", requireRole\("admin", "consultant", "manager"\), asyncHandler\(updateLedgerEntry\)\);/,
+    /router\.delete\("\/:id\/ledger\/:entryId", requireRole\("admin", "consultant", "manager"\), asyncHandler\(deleteLedgerEntry\)\);/,
     // updateCase/closeCase are now wrapped: updateCaseWithRequiredCollaboration
     // reuses updateCase's own logic, and both /lifecycle and /close additionally
     // gate on requireCompleteCaseTeam — an existing case can't move through its
     // lifecycle without a confirmed RCIC and Case Worker.
-    /router\.patch\("\/:id", requireRole\("admin", "consultant"\), asyncHandler\(updateCaseWithRequiredCollaboration\)\);/,
-    /router\.patch\(\n {2}"\/:id\/close",\n {2}requireRole\("admin", "consultant"\),\n {2}asyncHandler\(requireCompleteCaseTeam\),\n {2}asyncHandler\(closeCase\),\n\);/,
-    /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant"\), asyncHandler\(archiveCase\)\);/,
-    /router\.patch\("\/:id\/unarchive", requireRole\("admin", "consultant"\), asyncHandler\(unarchiveCase\)\);/,
-    /router\.delete\("\/:id", requireRole\("admin", "consultant"\), asyncHandler\(softDeleteCase\)\);/,
-    /router\.patch\("\/:id\/restore", requireRole\("admin", "consultant"\), asyncHandler\(restoreCase\)\);/,
+    /router\.patch\("\/:id", requireRole\("admin", "consultant", "manager"\), asyncHandler\(updateCaseWithRequiredCollaboration\)\);/,
+    /router\.patch\(\n {2}"\/:id\/close",\n {2}requireRole\("admin", "consultant", "manager"\),\n {2}asyncHandler\(requireCompleteCaseTeam\),\n {2}asyncHandler\(closeCase\),\n\);/,
+    /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant", "manager"\), asyncHandler\(archiveCase\)\);/,
+    /router\.patch\("\/:id\/unarchive", requireRole\("admin", "consultant", "manager"\), asyncHandler\(unarchiveCase\)\);/,
+    /router\.delete\("\/:id", requireRole\("admin", "consultant", "manager"\), asyncHandler\(softDeleteCase\)\);/,
+    /router\.patch\("\/:id\/restore", requireRole\("admin", "consultant", "manager"\), asyncHandler\(restoreCase\)\);/,
   ]) {
     assert.match(routes, pattern);
   }
@@ -86,7 +86,7 @@ test("case write endpoints (update/lifecycle/applicants/workflow/ledger) are adm
 
 test("notes require the internalNotes capability, not just client/case data access", async () => {
   const routes = await source("../src/routes/noteRoutes.js");
-  assert.match(routes, /router\.use\(requireRole\("admin", "consultant", "frontdesk"\)\);/);
+  assert.match(routes, /router\.use\(requireRole\("admin", "consultant", "frontdesk", "manager"\)\);/);
   assert.match(routes, /router\.use\(requirePortalCapability\("internalNotes"\)\);/);
 });
 
@@ -107,10 +107,10 @@ test("Cases.jsx and CaseProfile.jsx hide edit/lifecycle actions from view-only v
     source("../../frontend/src/pages/CaseProfile.jsx"),
     source("../../frontend/src/components/case-profile/CaseProfileSummary.jsx"),
   ]);
-  assert.match(listPage, /const canManageCases = \["admin", "consultant"\]\.includes\(role\);/);
+  assert.match(listPage, /const canManageCases = \["admin", "consultant", "manager"\]\.includes\(role\);/);
   assert.match(listPage, /disabled=\{!canManageCases \|\| registerView !== "active"\}/);
   assert.match(listPage, /if \(!canManage\) return null;/);
-  assert.match(profilePage, /const canManageCase = \["admin", "consultant"\]\.includes\(role\);/);
+  assert.match(profilePage, /const canManageCase = \["admin", "consultant", "manager"\]\.includes\(role\);/);
   assert.match(profilePage, /canManageCase=\{canManageCase\}/);
   assert.match(profilePage, /showEditClient=\{canManageCase\}/);
   assert.match(summary, /canManageCase \|\| !\["Applicants", "Archive", "Delete", "Close"\]\.includes\(item\)/);

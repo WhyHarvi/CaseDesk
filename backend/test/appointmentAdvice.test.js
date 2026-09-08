@@ -101,10 +101,10 @@ test("syncLeadNextAction is exported for reuse outside lead.service.js — appoi
   assert.match(leadService, /export async function syncLeadNextAction\(tx, leadId\)/);
 });
 
-test("the appointment-side routes require admin/consultant, matching notes and follow-ups on the same appointment", async () => {
+test("the appointment-side routes require admin/consultant/manager, matching notes and follow-ups on the same appointment", async () => {
   const routes = await source("../src/routes/appointmentRoutes.js");
-  assert.match(routes, /router\.post\("\/:id\/advice\/draft", requireRole\("admin", "consultant"\), asyncHandler\(saveAppointmentAdviceDraftController\)\)/);
-  assert.match(routes, /router\.post\("\/:id\/advice\/confirm", requireRole\("admin", "consultant"\), asyncHandler\(confirmAppointmentAdviceController\)\)/);
+  assert.match(routes, /router\.post\("\/:id\/advice\/draft", requireRole\("admin", "consultant", "manager"\), asyncHandler\(saveAppointmentAdviceDraftController\)\)/);
+  assert.match(routes, /router\.post\("\/:id\/advice\/confirm", requireRole\("admin", "consultant", "manager"\), asyncHandler\(confirmAppointmentAdviceController\)\)/);
 });
 
 test("the lead-side outcome route is nested under the lead, matching the follow-up route convention", async () => {

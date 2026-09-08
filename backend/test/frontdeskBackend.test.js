@@ -50,14 +50,14 @@ test("front desk role reaches only areas explicitly enabled by portal access", a
     source("../src/server.js"),
   ]);
   assert.match(schema, /enum UserRole \{[\s\S]*frontdesk/);
-  assert.match(auth, /\["developer", "admin", "consultant", "frontdesk", "client"\]/);
+  assert.match(auth, /\["developer", "admin", "consultant", "frontdesk", "client", "manager"\]/);
   assert.match(
     server,
-    /const staffUser = requireRole\("admin", "consultant", "frontdesk"\)/,
+    /const staffUser = requireRole\("admin", "consultant", "frontdesk", "manager"\)/,
   );
   assert.match(
     server,
-    /const leadUser = requireRole\("admin", "consultant", "frontdesk"\)/,
+    /const leadUser = requireRole\("admin", "consultant", "frontdesk", "manager"\)/,
   );
   assert.match(
     server,
@@ -86,20 +86,23 @@ test("lead router separates reception work from privileged decisions and adminis
     assert.match(routes, new RegExp(path.replaceAll("/", "\\/")));
   assert.match(
     routes,
-    /"\/:id\/qualify", requireRole\("admin", "consultant"\)/,
+    /"\/:id\/qualify", requireRole\("admin", "consultant", "manager"\)/,
   );
   assert.match(
     routes,
-    /"\/:id\/commercial-status", requireRole\("admin", "consultant"\)/,
+    /"\/:id\/commercial-status", requireRole\("admin", "consultant", "manager"\)/,
   );
   assert.match(
     routes,
-    /"\/:id\/convert", requireRole\("admin", "consultant"\)/,
+    /"\/:id\/convert", requireRole\("admin", "consultant", "manager"\)/,
   );
-  assert.match(routes, /"\/dashboard", requireRole\("admin"\)/);
+  // Dashboard/reports are team oversight (admin+manager); intake
+  // configuration (forms, events, connections, routing rules, settings)
+  // stays admin-only agency configuration.
+  assert.match(routes, /"\/dashboard", requireRole\("admin", "manager"\)/);
   assert.match(routes, /"\/intake\/operations", requireRole\("admin"\)/);
   assert.match(routes, /"\/intake\/connections", requireRole\("admin"\)/);
-  assert.match(routes, /"\/imports", requireRole\("admin", "consultant"\)/);
+  assert.match(routes, /"\/imports", requireRole\("admin", "consultant", "manager"\)/);
 });
 
 test("front desk operational payloads are constrained and auditable", () => {
@@ -174,13 +177,17 @@ test("team member administration supports consultant and front desk without expo
     source("../src/routes/adminRoutes.js"),
     source("../src/controllers/adminTeamMemberController.js"),
   ]);
-  assert.match(routes, /router\.use\(requireRole\("admin"\)\)/);
+  // Team-member creation/roster management is account provisioning and
+  // stays admin-only, even though other adminRoutes.js endpoints now open
+  // up to manager for oversight — see the Manager Role Permissions
+  // Proposal decision doc.
+  assert.match(routes, /router\.get\("\/team-members", admin, asyncHandler\(listTeamMembers\)\)/);
   assert.match(routes, /"\/team-members"/);
   assert.match(
     controller,
-    /managedRoles = new Set\(\["consultant", "frontdesk"\]\)/,
+    /managedRoles = new Set\(\["consultant", "frontdesk", "manager"\]\)/,
   );
-  assert.match(controller, /Role must be consultant or frontdesk/);
+  assert.match(controller, /Role must be consultant, frontdesk, or manager/);
   assert.match(controller, /leadAccess: "all"/);
   assert.match(controller, /ROLE_CHANGE_NOT_ALLOWED/);
   assert.match(controller, /ACTIVE_ASSIGNMENTS/);

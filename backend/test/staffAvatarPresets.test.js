@@ -27,5 +27,5 @@ test("the sidebar shows every signed-in staff member's avatar, including admins"
   ]);
   assert.doesNotMatch(sidebar, /AdminWorkspaceAvatar/);
   assert.match(sidebar, /<StaffAvatar[\s\S]*user=\{appUser\}/);
-  assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/);
+  assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk", "manager"\] \}/);
 });

@@ -30,11 +30,13 @@ test("consultants can perform reception intake without adding another role", () 
   assert.equal(canCreateLead(req("client")), false);
 });
 
-test("lead dashboard and report endpoints are admin-only", async () => {
+test("lead dashboard and report endpoints are admin/manager oversight, not open to consultant or front desk", async () => {
   const routes = await readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8");
-  assert.match(routes, /"\/dashboard", requireRole\("admin"\)/);
+  // Lead performance dashboards/reports are team oversight — open to admin
+  // and manager, not admin-only.
+  assert.match(routes, /"\/dashboard", requireRole\("admin", "manager"\)/);
   for (const report of ["funnel", "sources", "employees", "lost", "response-time", "ageing", "trends", "workload"]) {
-    assert.match(routes, new RegExp(`"/reports/${report}", requireRole\\("admin"\\)`));
+    assert.match(routes, new RegExp(`"/reports/${report}", requireRole\\("admin", "manager"\\)`));
   }
 });
 
@@ -43,11 +45,11 @@ test("stage, priority, and owner each have a real endpoint with the right role g
     readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx", import.meta.url), "utf8"),
   ]);
-  // Owner reassignment is admin-only; stage and priority are admin or the
-  // consultant currently assigned to the lead.
-  assert.match(routes, /router\.post\("\/:id\/assign", requireRole\("admin"\), asyncHandler\(assignLead\)\)/);
-  assert.match(routes, /router\.patch\("\/:id\/stage", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadStage\)\)/);
-  assert.match(routes, /router\.patch\("\/:id\/priority", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadPriority\)\)/);
+  // Owner reassignment is admin/manager oversight; stage and priority are
+  // admin/manager or the consultant currently assigned to the lead.
+  assert.match(routes, /router\.post\("\/:id\/assign", requireRole\("admin", "manager"\), asyncHandler\(assignLead\)\)/);
+  assert.match(routes, /router\.patch\("\/:id\/stage", requireRole\("admin", "consultant", "manager"\), asyncHandler\(changeLeadStage\)\)/);
+  assert.match(routes, /router\.patch\("\/:id\/priority", requireRole\("admin", "consultant", "manager"\), asyncHandler\(changeLeadPriority\)\)/);
 
   // All three are inline selectors. Admin owner transfers save immediately
   // without opening a reason form, while the API stays admin-only.
@@ -166,8 +168,9 @@ test("consultant lead transfers are approval-gated and have an admin review UI",
     readFile(new URL("../prisma/migrations/20260813180000_lead_transfer_approvals/migration.sql", import.meta.url), "utf8"),
   ]);
   assert.match(routes, /router\.post\("\/:id\/transfer-requests", requireRole\("consultant"\)/);
-  assert.match(routes, /router\.post\("\/transfer-requests\/:requestId\/approve", requireRole\("admin"\)/);
-  assert.match(routes, /router\.post\("\/transfer-requests\/:requestId\/reject", requireRole\("admin"\)/);
+  // Reviewing/deciding a transfer request is oversight — admin or manager.
+  assert.match(routes, /router\.post\("\/transfer-requests\/:requestId\/approve", requireRole\("admin", "manager"\)/);
+  assert.match(routes, /router\.post\("\/transfer-requests\/:requestId\/reject", requireRole\("admin", "manager"\)/);
   assert.match(service, /Only the consultant who owns this lead can request its transfer/);
   assert.match(service, /status: "PENDING"/);
   assert.match(page, /Lead transfer approvals/);

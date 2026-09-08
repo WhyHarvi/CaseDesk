@@ -35,7 +35,7 @@ test("internal chat realtime uses its own thread: topic namespace, separate from
 
 test("only active same-agency staff (not clients) can be messaged or added to a thread", async () => {
   const controller = await source("../src/controllers/internalChatController.js");
-  assert.match(controller, /const staffRoles = new Set\(\["admin", "consultant", "frontdesk"\]\);/);
+  assert.match(controller, /const staffRoles = new Set\(\["admin", "consultant", "frontdesk", "manager"\]\);/);
 
   const colleagues = controller.slice(
     controller.indexOf("export async function listMyColleagues"),

@@ -72,7 +72,7 @@ test("follow-up editor persists every visible field and loads complete scoped op
   assert.match(migration, /ADD COLUMN "priority"/);
   assert.match(controller, /followUpType: fieldParsers\.enumField/);
   assert.match(controller, /priority: fieldParsers\.enumField/);
-  assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/);
+  assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk", "manager"\] \}/);
   assert.match(routes, /router\.get\("\/options"/);
   assert.match(page, /followUpType: form\.followUpType/);
   assert.match(page, /priority: form\.priority/);

@@ -276,7 +276,7 @@ test("Case Easy staging data remains tenant scoped for every internal staff role
   ]);
   assert.match(
     routes,
-    /router\.use\(requireRole\("admin", "consultant", "frontdesk"\)\)/,
+    /router\.use\(requireRole\("admin", "consultant", "frontdesk", "manager"\)\)/,
   );
   assert.match(migration, /current_agency_id\(\)/);
   assert.match(

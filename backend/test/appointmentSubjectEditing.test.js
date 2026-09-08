@@ -29,7 +29,7 @@ test("staff can correct a bad appointment subject after the fact, frontdesk incl
 
   // Frontdesk was excluded from this route before — they're exactly the
   // role that does walk-in intake and would need to fix their own entry.
-  assert.match(routes, /router\.patch\("\/:id\/profile", requireRole\("admin", "consultant", "frontdesk"\), asyncHandler\(updateAppointmentProfileContext\)\);/);
+  assert.match(routes, /router\.patch\("\/:id\/profile", requireRole\("admin", "consultant", "frontdesk", "manager"\), asyncHandler\(updateAppointmentProfileContext\)\);/);
 
   // Frontend: an inline edit control on the subject itself (not folded into
   // the separate "Edit context" purpose/notes editor), with the same
