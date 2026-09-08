@@ -689,30 +689,12 @@ export async function changeTeamMemberRole(req, res) {
       "ROLE_UNCHANGED",
     );
 
-  // A role change can't silently orphan active work — same rule
-  // disableTeamMember already applies when taking someone offline entirely.
-  if (["consultant", "manager"].includes(existing.role)) {
-    const openCaseAssignments = await prisma.case.count({
-      where: {
-        agencyId: req.auth.agencyId,
-        status: { notIn: ["Completed", "Closed", "Cancelled", "Inactive"] },
-        OR: [
-          { assignedUserId: existing.id },
-          {
-            assignments: {
-              some: { consultantUserId: existing.id, status: "active" },
-            },
-          },
-        ],
-      },
-    });
-    if (openCaseAssignments)
-      throw createHttpError(
-        409,
-        `Reassign ${openCaseAssignments} open case(s) before changing this team member's role.`,
-        "ACTIVE_ASSIGNMENTS",
-      );
-  }
+  // Unlike disabling, a role change doesn't orphan anything: the account
+  // stays active and every existing case/lead assignment (assignedUserId,
+  // CaseAssignment rows) is untouched — a manager (or frontdesk) can hold
+  // case assignments same as a consultant, and caseAccessWhere's "all" data
+  // scope for manager only adds visibility on top of that, never removes
+  // the underlying assignment. So no open-assignment check here.
 
   const membership = await prisma.agencyMember.findUnique({
     where: {
@@ -726,9 +708,15 @@ export async function changeTeamMemberRole(req, res) {
   // for "consultant" (or vice versa) shouldn't silently carry over onto a
   // different role it was never configured for.
   const permissions = defaultPermissions(nextRole);
+  // A manager can still be a licensed consultant carrying real cases (that's
+  // the point — becoming a manager doesn't require handing off existing
+  // work), so licence/representative info and the consultant capacity
+  // profile are only cleared moving to frontdesk, which has no case- or
+  // licensing concept at all. Moving to manager keeps them intact.
+  const clearsConsultantProfile = nextRole === "frontdesk";
 
   const data = await prisma.$transaction(async (tx) => {
-    if (nextRole !== "consultant") {
+    if (clearsConsultantProfile) {
       await tx.consultantProfile.deleteMany({
         where: { agencyId: req.auth.agencyId, userId: existing.id },
       });
@@ -742,7 +730,7 @@ export async function changeTeamMemberRole(req, res) {
       data: {
         role: nextRole,
         jobTitle: defaultJobTitle(nextRole),
-        ...(nextRole !== "consultant"
+        ...(clearsConsultantProfile
           ? {
               licenseNumber: null,
               representativeType: null,
