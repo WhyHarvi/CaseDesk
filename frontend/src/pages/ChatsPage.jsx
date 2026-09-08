@@ -34,6 +34,8 @@ import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from ".
 import { NovaAssistantAvatar, NovaChatCompanion, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator, useNovaProactiveInsight } from "../components/chat/NovaChatPresentation";
 import SupportDeskPanel from "../components/chat/SupportDeskPanel";
 import CommunicationComposer from "../components/case-profile/communication/CommunicationComposer";
+import NovaSlashCommands from "../components/chat/NovaSlashCommands";
+import { useNovaCatVisibility } from "../hooks/useNovaCatVisibility";
 
 const RECONCILE_POLL_MS = 5 * 60_000; // realtime connected — safety net only
 const FALLBACK_POLL_MS = 60_000; // realtime unavailable
@@ -506,6 +508,7 @@ export default function ChatsPage() {
   const [smsFromNumber, setSmsFromNumber] = useState("");
   const [smsSyncing, setSmsSyncing] = useState(false);
   const { messages: novaMessages, sending: novaSending, error: novaError } = useNovaChat();
+  const novaCatVisible = useNovaCatVisibility();
   const novaContextPath = searchParams.get("from") || location.pathname;
   const novaPanelVisible = activeDetail?.kind === "ai" && novaMessages.length === 1;
   const novaInsight = useNovaProactiveInsight(novaContextPath, { enabled: novaPanelVisible });
@@ -1502,7 +1505,7 @@ export default function ChatsPage() {
               ) : (
                 <>
                   <div className="relative min-h-0 flex-1">
-                    {activeDetail?.kind === "ai" ? <NovaChatCompanion active sending={novaSending} /> : null}
+                    {novaCatVisible && activeDetail?.kind === "ai" ? <NovaChatCompanion active sending={novaSending} /> : null}
                     <ChatThread
                 messages={displayMessages}
                 mineDirection="Outbound"
@@ -1553,6 +1556,7 @@ export default function ChatsPage() {
               <div className="relative z-10 shrink-0 border-t border-slate-200/70 bg-white/90 px-4 py-3 backdrop-blur-xl">
                 {novaPanelVisible ? <NovaProactiveInsight insight={novaInsight} /> : null}
                 {novaPanelVisible ? <NovaSuggestions onSelect={setDraft} currentPath={novaContextPath} persona={novaInsight?.persona} /> : null}
+                {activeDetail?.kind === "ai" ? <NovaSlashCommands value={draft} onSelect={setDraft} /> : null}
                 {activeDetail?.kind === "sms" ? (
                   <div className="mb-2 flex min-h-10 items-center gap-3 rounded-xl border border-sky-100 bg-sky-50/70 px-3">
                     <label htmlFor="chat-sms-sender" className="shrink-0 text-xs font-semibold text-sky-800">Send from</label>

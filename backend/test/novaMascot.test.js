@@ -38,6 +38,32 @@ test("the playful Nova cat opens the existing Nova conversation without blocking
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
+test("Nova slash commands hide and restore the cat without calling the AI", async () => {
+  const [widget, chatsPage, novaChat, commands, visibility] = await Promise.all([
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/hooks/useNovaChat.js"),
+    source("../../frontend/src/components/chat/NovaSlashCommands.jsx"),
+    source("../../frontend/src/hooks/useNovaCatVisibility.js"),
+  ]);
+
+  assert.match(novaChat, /\{ name: "\/hide", description:/);
+  assert.match(novaChat, /\{ name: "\/follow", description:/);
+  assert.match(novaChat, /const command = NOVA_COMMAND_ALIASES\[content\.toLowerCase\(\)\];/);
+  assert.match(novaChat, /setNovaCatVisible\(command\.visible\);/);
+  assert.match(novaChat, /systemOnly: true/);
+  assert.match(commands, /query\.startsWith\("\/"\)/);
+  assert.match(commands, /aria-label="Nova slash commands"/);
+  assert.match(commands, /focus-visible:ring-2/);
+  assert.match(visibility, /casedesk:nova-cat-visible/);
+  assert.match(visibility, /window\.localStorage\.setItem\(STORAGE_KEY, String\(value\)\)/);
+  assert.match(visibility, /window\.addEventListener\("storage"/);
+  assert.match(widget, /novaCatVisible && !open && !incomingPreview \? <NovaCatMascot/);
+  assert.match(widget, /<NovaSlashCommands value=\{draft\} onSelect=\{setDraft\} compact \/>/);
+  assert.match(chatsPage, /novaCatVisible && activeDetail\?\.kind === "ai" \? <NovaChatCompanion/);
+  assert.match(chatsPage, /<NovaSlashCommands value=\{draft\} onSelect=\{setDraft\} \/>/);
+});
+
 test("Nova's movement pause persists on the user account, sleeps in place, and synchronizes across tabs and devices", async () => {
   const [schema, controller, routes, mascot, styles] = await Promise.all([
     source("../prisma/schema.prisma"),
@@ -280,7 +306,7 @@ test("a small reactive Nova companion lives inside the open chat panel itself �
 
   // Rendered only while the Nova thread itself is the active view — not
   // for client/support conversations.
-  assert.match(widget, /\{view === "thread" && activeDetail\?\.kind === "ai" \? \(\s*\n\s*<NovaChatCompanion active sending=\{novaSending\} \/>/);
+  assert.match(widget, /\{novaCatVisible && view === "thread" && activeDetail\?\.kind === "ai" \? \(\s*\n\s*<NovaChatCompanion active sending=\{novaSending\} \/>/);
 
   // Snapchat-style: peeks up from behind the composer bar, half-hidden by
   // it, not a clean banner. position:absolute content paints above static
@@ -323,7 +349,7 @@ test("the full-page Chats view (the 'expanded' Nova conversation) gets the same 
   // (mirroring FloatingChatWidget's structure) rather than nested inside
   // the composer — nesting it there would make it paint on top of the
   // composer's own background instead of tucking behind it.
-  assert.match(chatsPage, /<div className="relative min-h-0 flex-1">\s*\n\s*\{activeDetail\?\.kind === "ai" \? <NovaChatCompanion active sending=\{novaSending\} \/> : null\}\s*\n\s*<ChatThread/);
+  assert.match(chatsPage, /<div className="relative min-h-0 flex-1">\s*\n\s*\{novaCatVisible && activeDetail\?\.kind === "ai" \? <NovaChatCompanion active sending=\{novaSending\} \/> : null\}\s*\n\s*<ChatThread/);
   assert.match(chatsPage, /className="h-full px-4 py-5"/);
   assert.match(chatsPage, /relative z-10 shrink-0 border-t border-slate-200\/70 bg-white\/90/);
 });

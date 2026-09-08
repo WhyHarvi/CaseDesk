@@ -29,6 +29,8 @@ import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from ".
 import { NovaAssistantAvatar, NovaChatCompanion, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator, useNovaProactiveInsight } from "./NovaChatPresentation";
 import SupportDeskPanel from "./SupportDeskPanel";
 import NovaCatMascot from "./NovaCatMascot";
+import NovaSlashCommands from "./NovaSlashCommands";
+import { useNovaCatVisibility } from "../../hooks/useNovaCatVisibility";
 
 const RECONCILE_POLL_MS = 5 * 60_000;
 const FALLBACK_POLL_MS = 60_000;
@@ -163,6 +165,7 @@ export default function FloatingChatWidget() {
   }, [open]);
   const [incomingPreview, setIncomingPreview] = useState(null);
   const { messages: novaMessages, sending: novaSending, error: novaError } = useNovaChat();
+  const novaCatVisible = useNovaCatVisibility();
   const previewTimerRef = useRef(null);
 
   const novaItem = useMemo(() => {
@@ -632,7 +635,7 @@ export default function FloatingChatWidget() {
 
   return createPortal(
     <div className={`fixed bottom-6 z-[410] flex flex-col items-end transition-[right] duration-300 ${phoneFloat.open ? "right-24 lg:right-[26rem]" : phoneFloat.active ? "right-24 lg:right-[21rem]" : "right-24"}`} data-floating-chat>
-      {!open && !incomingPreview ? <NovaCatMascot key={location.pathname} onActivate={openNovaFromMascot} firstName={novaFirstName} currentPath={location.pathname} /> : null}
+      {novaCatVisible && !open && !incomingPreview ? <NovaCatMascot key={location.pathname} onActivate={openNovaFromMascot} firstName={novaFirstName} currentPath={location.pathname} /> : null}
       <AnimatePresence>
         {open ? (
           <motion.div
@@ -680,7 +683,7 @@ export default function FloatingChatWidget() {
             </header>
 
             <div className={`relative min-h-0 flex-1 ${activeDetail?.kind === "ai" ? "bg-gradient-to-b from-brand-50/70 via-slate-50/40 to-white" : ""}`}>
-              {view === "thread" && activeDetail?.kind === "ai" ? (
+              {novaCatVisible && view === "thread" && activeDetail?.kind === "ai" ? (
                 <NovaChatCompanion active sending={novaSending} />
               ) : null}
               {listLoading && !mergedItems.length ? (
@@ -760,6 +763,7 @@ export default function FloatingChatWidget() {
                 {(activeDetail?.kind === "ai" ? novaError : error) ? <p className="mb-2 rounded-xl bg-rose-50 px-3 py-1.5 text-[11px] text-rose-700">{activeDetail?.kind === "ai" ? novaError : error}</p> : null}
                 {novaPanelVisible ? <NovaProactiveInsight insight={novaInsight} compact /> : null}
                 {novaPanelVisible ? <NovaSuggestions onSelect={setDraft} currentPath={location.pathname} persona={novaInsight?.persona} compact /> : null}
+                {activeDetail?.kind === "ai" ? <NovaSlashCommands value={draft} onSelect={setDraft} compact /> : null}
                 <ChatComposer
                   value={draft}
                   onChange={setDraft}
