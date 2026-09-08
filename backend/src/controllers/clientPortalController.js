@@ -5,7 +5,7 @@ import { removeDocumentFile, requireDocumentFile, writeDocumentFile } from "../s
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
-import { getClientInvoicePdf, listClientInvoices } from "../services/caseInvoiceService.js";
+import { finalizeAwaitingPaymentMethodInvoice, getClientInvoicePdf, listClientInvoices } from "../services/caseInvoiceService.js";
 import { getCaseSchedule, releaseInstallmentsHeldByRetainer } from "../services/paymentScheduleService.js";
 import { buildClientBillingLedger } from "../services/accountStatementService.js";
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
@@ -540,7 +540,7 @@ export async function getPortalDocuments(req, res) {
 
 export async function getPortalPayments(req, res) {
   const link = await linkedClient(req);
-  const [agency, caseItem, cases] = await Promise.all([
+  const [agency, caseItem, cases, quickBooksSettings] = await Promise.all([
     prisma.agency.findUnique({
       where: { id: req.auth.agencyId },
       select: { paymentInstructions: true, defaultCurrency: true },
@@ -553,6 +553,10 @@ export async function getPortalPayments(req, res) {
     prisma.case.findMany({
       where: { agencyId: req.auth.agencyId, clientId: link.clientId },
       select: { id: true, caseType: true },
+    }),
+    prisma.agencyQuickBooksSettings.findUnique({
+      where: { agencyId: req.auth.agencyId },
+      select: { cardSurchargeRatePercent: true, bankTransferFeeRatePercent: true },
     }),
   ]);
   const currency = agency?.defaultCurrency || "CAD";
@@ -577,6 +581,15 @@ export async function getPortalPayments(req, res) {
         netCollected: money(ledger.summary.netCollected),
       },
       instructions: agency?.paymentInstructions || null,
+      // Shown alongside any AwaitingPaymentMethod invoice so the client
+      // sees the fee before choosing — see the "choose-method" endpoint
+      // and docs/Decisions/Credit Card Surcharge Proposal.md.
+      surchargeRates: quickBooksSettings
+        ? {
+            cardSurchargeRatePercent: Number(quickBooksSettings.cardSurchargeRatePercent),
+            bankTransferFeeRatePercent: Number(quickBooksSettings.bankTransferFeeRatePercent),
+          }
+        : null,
       syncWarning: ledger.syncWarning,
       schedule: schedule
         ? {
@@ -753,6 +766,30 @@ export async function downloadPortalInvoicePdf(req, res) {
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("Content-Length", buffer.length);
   res.send(buffer);
+}
+
+// The client's own step in the credit-card/bank-transfer surcharge flow —
+// an installment invoiced automatically has no one present to ask "how
+// will you pay?" (see fireInstallment's deferMethodChoice), so it lands
+// here in AwaitingPaymentMethod status until the client picks. Ownership is
+// checked here (clientId must match this portal session) before handing
+// off to finalizeAwaitingPaymentMethodInvoice, which re-checks status and
+// does the actual QuickBooks work. See
+// docs/Decisions/Credit Card Surcharge Proposal.md.
+export async function choosePortalInvoicePaymentMethod(req, res) {
+  const link = await linkedClient(req);
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: req.params.invoiceId, agencyId: req.auth.agencyId, clientId: link.clientId, status: "AwaitingPaymentMethod" },
+    select: { id: true },
+  });
+  if (!invoice) throw createHttpError(404, "This invoice is not awaiting a payment method choice.", "NOT_FOUND");
+  const method = String(req.body?.method || "").trim();
+  const data = await finalizeAwaitingPaymentMethodInvoice(req.auth.agencyId, {
+    invoiceId: invoice.id,
+    onlineMethod: method,
+    actorUserId: req.auth.userId,
+  });
+  res.json({ success: true, data });
 }
 
 export async function getPortalTimeline(req, res) {

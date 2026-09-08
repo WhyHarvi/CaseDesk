@@ -122,12 +122,33 @@ export async function createQuickBooksMappingItem(req, res) {
 export async function getQuickBooksMapping(req, res) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({
     where: { agencyId: req.auth.agencyId },
-    select: { feeItemId: true, feeItemName: true, disbursementItemId: true, disbursementItemName: true, consultFeeItemId: true, consultFeeItemName: true, taxableTaxCodeId: true, taxableTaxCodeName: true, refundFeeRatePercent: true },
+    select: {
+      feeItemId: true, feeItemName: true,
+      disbursementItemId: true, disbursementItemName: true,
+      consultFeeItemId: true, consultFeeItemName: true,
+      cardSurchargeItemId: true, cardSurchargeItemName: true,
+      bankTransferFeeItemId: true, bankTransferFeeItemName: true,
+      taxableTaxCodeId: true, taxableTaxCodeName: true,
+      refundFeeRatePercent: true, cardSurchargeRatePercent: true, bankTransferFeeRatePercent: true,
+    },
   });
   res.json({
     data: settings
-      ? { ...settings, refundFeeRatePercent: Number(settings.refundFeeRatePercent) }
-      : { feeItemId: null, feeItemName: null, disbursementItemId: null, disbursementItemName: null, consultFeeItemId: null, consultFeeItemName: null, taxableTaxCodeId: null, taxableTaxCodeName: null, refundFeeRatePercent: null },
+      ? {
+          ...settings,
+          refundFeeRatePercent: Number(settings.refundFeeRatePercent),
+          cardSurchargeRatePercent: Number(settings.cardSurchargeRatePercent),
+          bankTransferFeeRatePercent: Number(settings.bankTransferFeeRatePercent),
+        }
+      : {
+          feeItemId: null, feeItemName: null,
+          disbursementItemId: null, disbursementItemName: null,
+          consultFeeItemId: null, consultFeeItemName: null,
+          cardSurchargeItemId: null, cardSurchargeItemName: null,
+          bankTransferFeeItemId: null, bankTransferFeeItemName: null,
+          taxableTaxCodeId: null, taxableTaxCodeName: null,
+          refundFeeRatePercent: null, cardSurchargeRatePercent: null, bankTransferFeeRatePercent: null,
+        },
   });
 }
 
@@ -136,23 +157,44 @@ export async function updateQuickBooksMapping(req, res) {
   const feeItemId = req.body?.feeItemId !== undefined ? String(req.body.feeItemId || "").trim() || null : undefined;
   const disbursementItemId = req.body?.disbursementItemId !== undefined ? String(req.body.disbursementItemId || "").trim() || null : undefined;
   const consultFeeItemId = req.body?.consultFeeItemId !== undefined ? String(req.body.consultFeeItemId || "").trim() || null : undefined;
+  const cardSurchargeItemId = req.body?.cardSurchargeItemId !== undefined ? String(req.body.cardSurchargeItemId || "").trim() || null : undefined;
+  const bankTransferFeeItemId = req.body?.bankTransferFeeItemId !== undefined ? String(req.body.bankTransferFeeItemId || "").trim() || null : undefined;
   const taxableTaxCodeId = req.body?.taxableTaxCodeId !== undefined ? String(req.body.taxableTaxCodeId || "").trim() || null : undefined;
   const refundFeeRatePercent = req.body?.refundFeeRatePercent !== undefined ? Number(req.body.refundFeeRatePercent) : undefined;
   if (refundFeeRatePercent !== undefined && (!Number.isFinite(refundFeeRatePercent) || refundFeeRatePercent < 0 || refundFeeRatePercent > 20)) {
     throw createHttpError(400, "Enter a refund fee rate between 0% and 20%.", "VALIDATION_ERROR");
   }
-  if (feeItemId === undefined && disbursementItemId === undefined && consultFeeItemId === undefined && taxableTaxCodeId === undefined && refundFeeRatePercent === undefined) {
+  const cardSurchargeRatePercent = req.body?.cardSurchargeRatePercent !== undefined ? Number(req.body.cardSurchargeRatePercent) : undefined;
+  // 2.4% is the Canadian card-network surcharge cap (the lesser of that or
+  // actual cost of acceptance) — see docs/Decisions/Credit Card Surcharge
+  // Proposal.md. Enforced here, not just documented, so an agency can't
+  // configure a non-compliant rate through this API.
+  if (cardSurchargeRatePercent !== undefined && (!Number.isFinite(cardSurchargeRatePercent) || cardSurchargeRatePercent < 0 || cardSurchargeRatePercent > 2.4)) {
+    throw createHttpError(400, "Enter a credit card surcharge rate between 0% and 2.4% (the Canadian card-network cap).", "VALIDATION_ERROR");
+  }
+  const bankTransferFeeRatePercent = req.body?.bankTransferFeeRatePercent !== undefined ? Number(req.body.bankTransferFeeRatePercent) : undefined;
+  if (bankTransferFeeRatePercent !== undefined && (!Number.isFinite(bankTransferFeeRatePercent) || bankTransferFeeRatePercent < 0 || bankTransferFeeRatePercent > 10)) {
+    throw createHttpError(400, "Enter a bank transfer fee rate between 0% and 10%.", "VALIDATION_ERROR");
+  }
+  if (
+    feeItemId === undefined && disbursementItemId === undefined && consultFeeItemId === undefined &&
+    cardSurchargeItemId === undefined && bankTransferFeeItemId === undefined &&
+    taxableTaxCodeId === undefined && refundFeeRatePercent === undefined &&
+    cardSurchargeRatePercent === undefined && bankTransferFeeRatePercent === undefined
+  ) {
     throw createHttpError(400, "Nothing to update.", "VALIDATION_ERROR");
   }
 
   // Re-verify all ids against the live QuickBooks company on every save —
   // items get deleted/deactivated in QBO outside our control, and a stale
   // mapping must never silently keep invoicing against a dead item.
-  const items = feeItemId || disbursementItemId || consultFeeItemId ? await listQuickBooksItems(req.auth.agencyId) : [];
+  const items = feeItemId || disbursementItemId || consultFeeItemId || cardSurchargeItemId || bankTransferFeeItemId ? await listQuickBooksItems(req.auth.agencyId) : [];
   const byId = new Map(items.map((item) => [item.id, item]));
   if (feeItemId && !byId.has(feeItemId)) throw createHttpError(400, "That fee item was not found in QuickBooks.", "VALIDATION_ERROR");
   if (disbursementItemId && !byId.has(disbursementItemId)) throw createHttpError(400, "That disbursement item was not found in QuickBooks.", "VALIDATION_ERROR");
   if (consultFeeItemId && !byId.has(consultFeeItemId)) throw createHttpError(400, "That consultation fee item was not found in QuickBooks.", "VALIDATION_ERROR");
+  if (cardSurchargeItemId && !byId.has(cardSurchargeItemId)) throw createHttpError(400, "That credit card surcharge item was not found in QuickBooks.", "VALIDATION_ERROR");
+  if (bankTransferFeeItemId && !byId.has(bankTransferFeeItemId)) throw createHttpError(400, "That bank transfer fee item was not found in QuickBooks.", "VALIDATION_ERROR");
   const taxCodes = taxableTaxCodeId ? await listQuickBooksTaxCodes(req.auth.agencyId) : [];
   const taxCode = taxCodes.find((candidate) => candidate.id === taxableTaxCodeId) || null;
   if (taxableTaxCodeId && !taxCode) throw createHttpError(400, "That sales-tax code was not found in QuickBooks.", "VALIDATION_ERROR");
@@ -164,14 +206,20 @@ export async function updateQuickBooksMapping(req, res) {
     ...(feeItemId !== undefined ? { feeItemId, feeItemName: feeItemId ? byId.get(feeItemId).name : null } : {}),
     ...(disbursementItemId !== undefined ? { disbursementItemId, disbursementItemName: disbursementItemId ? byId.get(disbursementItemId).name : null } : {}),
     ...(consultFeeItemId !== undefined ? { consultFeeItemId, consultFeeItemName: consultFeeItemId ? byId.get(consultFeeItemId).name : null } : {}),
+    ...(cardSurchargeItemId !== undefined ? { cardSurchargeItemId, cardSurchargeItemName: cardSurchargeItemId ? byId.get(cardSurchargeItemId).name : null } : {}),
+    ...(bankTransferFeeItemId !== undefined ? { bankTransferFeeItemId, bankTransferFeeItemName: bankTransferFeeItemId ? byId.get(bankTransferFeeItemId).name : null } : {}),
     ...(taxableTaxCodeId !== undefined ? { taxableTaxCodeId, taxableTaxCodeName: taxCode?.name || null } : {}),
     ...(refundFeeRatePercent !== undefined ? { refundFeeRatePercent } : {}),
+    ...(cardSurchargeRatePercent !== undefined ? { cardSurchargeRatePercent } : {}),
+    ...(bankTransferFeeRatePercent !== undefined ? { bankTransferFeeRatePercent } : {}),
   };
   const settings = await prisma.agencyQuickBooksSettings.update({ where: { agencyId: req.auth.agencyId }, data });
   const categoryUpdates = [];
   if (feeItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "fees", settings.feeItemId, settings.feeItemName));
   if (disbursementItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "disbursement", settings.disbursementItemId, settings.disbursementItemName));
   if (consultFeeItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "consultation", settings.consultFeeItemId, settings.consultFeeItemName));
+  if (cardSurchargeItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "card-surcharge", settings.cardSurchargeItemId, settings.cardSurchargeItemName));
+  if (bankTransferFeeItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "bank-transfer-fee", settings.bankTransferFeeItemId, settings.bankTransferFeeItemName));
   await Promise.all(categoryUpdates);
   await recordActivity({
     agencyId: req.auth.agencyId,
@@ -179,7 +227,19 @@ export async function updateQuickBooksMapping(req, res) {
     action: "quickbooks.mapping_updated",
     details: "Payment account mapping updated",
   }).catch(() => {});
-  res.json({ data: { feeItemId: settings.feeItemId, feeItemName: settings.feeItemName, disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName, consultFeeItemId: settings.consultFeeItemId, consultFeeItemName: settings.consultFeeItemName, taxableTaxCodeId: settings.taxableTaxCodeId, taxableTaxCodeName: settings.taxableTaxCodeName, refundFeeRatePercent: Number(settings.refundFeeRatePercent) } });
+  res.json({
+    data: {
+      feeItemId: settings.feeItemId, feeItemName: settings.feeItemName,
+      disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName,
+      consultFeeItemId: settings.consultFeeItemId, consultFeeItemName: settings.consultFeeItemName,
+      cardSurchargeItemId: settings.cardSurchargeItemId, cardSurchargeItemName: settings.cardSurchargeItemName,
+      bankTransferFeeItemId: settings.bankTransferFeeItemId, bankTransferFeeItemName: settings.bankTransferFeeItemName,
+      taxableTaxCodeId: settings.taxableTaxCodeId, taxableTaxCodeName: settings.taxableTaxCodeName,
+      refundFeeRatePercent: Number(settings.refundFeeRatePercent),
+      cardSurchargeRatePercent: Number(settings.cardSurchargeRatePercent),
+      bankTransferFeeRatePercent: Number(settings.bankTransferFeeRatePercent),
+    },
+  });
 }
 
 export async function disconnectQuickBooks(req, res) {

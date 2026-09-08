@@ -727,6 +727,11 @@ async function fireInstallment(agencyId, installment, actorUserId) {
       discountAmount: Number(installment.discountAmount || 0),
       dueDate: undefined,
       actorUserId,
+      // No one is present to ask the client how they'll pay when an
+      // installment fires automatically — the client picks in the portal
+      // (see the client-portal choose-method endpoint), which calls
+      // finalizeAwaitingPaymentMethodInvoice to complete this same row.
+      deferMethodChoice: true,
     });
     const updated = await prisma.casePaymentInstallment.update({
       where: { id: installment.id },

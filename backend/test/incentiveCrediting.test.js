@@ -151,9 +151,9 @@ test("admins can be assigned an incentive role and pick their own avatar too —
   ]);
 
   // User.role also covers client-portal accounts (and unused roles like
-  // developer/staff/manager/accountant) — both the list and the update
-  // below must scope to real staff only, or a client account could leak
-  // into (or worse, be written to via) this endpoint.
+  // developer/staff/accountant) — both the list and the update below must
+  // scope to real staff only, or a client account could leak into (or
+  // worse, be written to via) this endpoint.
   assert.match(controller, /const incentiveEligibleRoles = \["admin", \.\.\.managedRoles\];/);
 
   const listStart = controller.indexOf("export async function listIncentiveRoleMembers(");
@@ -175,11 +175,13 @@ test("admins can be assigned an incentive role and pick their own avatar too —
   assert.match(updateBody, /data: \{ avatarPreset, avatarStorageKey: null, avatarMimeType: null \}/);
   assert.match(updateBody, /normalizeAvatarPreset\(req\.body\.avatarPreset, \{ required: true \}\)/);
 
-  assert.match(routes, /router\.get\("\/incentive-role-members", asyncHandler\(listIncentiveRoleMembers\)\)/);
-  assert.match(routes, /router\.patch\("\/incentive-role-members\/:id", asyncHandler\(updateMemberProfile\)\)/);
-  // This whole router is requireRole("admin")-gated at the top — confirm
-  // the new routes aren't accidentally mounted somewhere else unguarded.
-  assert.match(routes, /router\.use\(requireRole\("admin"\)\);[\s\S]*router\.get\("\/incentive-role-members"/);
+  // Viewing this roster is oversight (admin + manager); editing a member's
+  // incentive-role assignment stays admin-only — see the Manager Role
+  // Permissions Proposal decision doc.
+  assert.match(routes, /router\.get\("\/incentive-role-members", oversight, asyncHandler\(listIncentiveRoleMembers\)\)/);
+  assert.match(routes, /router\.patch\("\/incentive-role-members\/:id", admin, asyncHandler\(updateMemberProfile\)\)/);
+  assert.match(routes, /const admin = requireRole\("admin"\);/);
+  assert.match(routes, /const oversight = requireRole\("admin", "manager"\);/);
 
   // Admins render in the exact same card grid as consultants/frontdesk —
   // same "Admins" filter pill, same role badge lookup, same
@@ -240,7 +242,10 @@ test("computeSnapshotPool reports which rate it matched alongside the pool, and 
   assert.match(fnBody, /return \{ pool: Number\(snapshot\.flatAmount\), matchedRate: null \};/);
   assert.match(fnBody, /return \{ pool: \(delta \* Number\(snapshot\.percentRate\)\) \/ 100, matchedRate: Number\(snapshot\.percentRate\) \};/);
   assert.match(fnBody, /return \{ pool: rate === null \? 0 : \(delta \* rate\) \/ 100, matchedRate: rate \};/);
-  assert.match(service, /const \{ pool \} = await computeSnapshotPool\(snapshot, \{ agencyId, caseId, delta \}\);/);
+  // The real crediting path passes the revenue-eligible (surcharge-excluded)
+  // delta, not the raw balance delta — see creditCaseInvoiceCollection's
+  // waterfall cap in docs/Decisions/Credit Card Surcharge Proposal.md.
+  assert.match(service, /const \{ pool \} = await computeSnapshotPool\(snapshot, \{ agencyId, caseId, delta: eligibleDelta \}\);/);
 });
 
 test("the pipeline estimate exposes the formula detail and matched rate behind its final amount, not just the amount", async () => {
@@ -395,7 +400,12 @@ test("a revenue-contest write failure can no longer post the incentive ledger cr
   const creditBranchEnd = creditingService.indexOf("return { credited: true, entryCount: rows.length };", creditBranchStart);
   const creditBranch = creditingService.slice(creditBranchStart, creditBranchEnd);
   assert.match(creditBranch, /await tx\.incentiveLedgerEntry\.createMany\(\{ data: rows \}\);/);
-  assert.match(creditBranch, /await recordRevenueMovement\(agencyId, \{ caseId, caseInvoiceId, delta, triggerSource: trigger,/);
+  // The credit branch posts the revenue-eligible delta (surcharge excluded),
+  // not the raw balance delta — see creditCaseInvoiceCollection's waterfall
+  // cap in docs/Decisions/Credit Card Surcharge Proposal.md. The reversal
+  // branch above still uses the raw delta: reverseInvoiceCredits/
+  // reverseRevenueCredits self-limit against what was actually credited.
+  assert.match(creditBranch, /await recordRevenueMovement\(agencyId, \{ caseId, caseInvoiceId, delta: eligibleDelta, triggerSource: trigger,/);
   assert.match(creditBranch, /\}, tx\);\s*$/);
   assert.ok(creditBranch.indexOf("createMany") < creditBranch.indexOf("recordRevenueMovement"),
     "the ledger credit must be written before the revenue credit is attempted, both inside the same transaction");

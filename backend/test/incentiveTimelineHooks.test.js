@@ -31,7 +31,7 @@ test("timeline-bonus evaluation is wired into all 3 hook points, each best-effor
   // FIRST_PAYMENT_COLLECTED legs a free retry sweep via the existing
   // reconcilePendingIncentiveCredits worker.
   const creditedBlockIndex = creditingService.indexOf("if (result.credited) {");
-  const creditedBlock = creditingService.slice(creditedBlockIndex, creditedBlockIndex + 500);
+  const creditedBlock = creditingService.slice(creditedBlockIndex, creditedBlockIndex + 600);
   assert.match(creditedBlock, /await evaluateCaseTimelineLegs\(agencyId, caseId\)\.catch\(\(error\) => \{\s*\n\s*logger\.warn\("incentive\.timeline_bonus_evaluation_failed"/);
 });
 

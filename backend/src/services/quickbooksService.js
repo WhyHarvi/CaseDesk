@@ -478,6 +478,12 @@ export async function createQuickBooksInvoice(agencyId, {
   expectedTotal,
   discountAmount = 0,
   globalTaxCalculation = "TaxExcluded",
+  // Restricts which method QuickBooks' hosted "Pay now" page offers the
+  // client — the only lever CaseDesk has, since the method itself is
+  // chosen entirely inside Intuit's checkout. Defaults to both open,
+  // matching every caller before the credit-card/bank-transfer surcharge
+  // feature existed. See docs/Decisions/Credit Card Surcharge Proposal.md.
+  allowedOnlineMethods = { card: true, bankTransfer: true },
 }) {
   const invoiceLines = Array.isArray(lines) && lines.length
     ? lines
@@ -502,8 +508,8 @@ export async function createQuickBooksInvoice(agencyId, {
       ...(dueDate ? { DueDate: dueDate } : {}),
       GlobalTaxCalculation: globalTaxCalculation,
       ...(fixedDiscount > 0 ? { ApplyTaxAfterDiscount: false } : {}),
-      AllowOnlineCreditCardPayment: true,
-      AllowOnlineACHPayment: true,
+      AllowOnlineCreditCardPayment: allowedOnlineMethods.card !== false,
+      AllowOnlineACHPayment: allowedOnlineMethods.bankTransfer !== false,
       Line: buildQuickBooksInvoiceLines({
         invoiceLines,
         taxableTaxCodeId,

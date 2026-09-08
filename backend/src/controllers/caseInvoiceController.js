@@ -16,6 +16,10 @@ export async function createInvoice(req, res) {
     discountAmount: req.body?.discountAmount,
     dueDate: req.body?.dueDate,
     actorUserId: req.auth.userId,
+    // "card" | "bankTransfer" | omitted — how the client already told
+    // staff they'll pay. Applies the matching surcharge and restricts the
+    // QuickBooks hosted page to that one method.
+    onlineMethod: req.body?.paymentMethod || null,
   });
   res.status(201).json({ data });
 }

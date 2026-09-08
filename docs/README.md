@@ -44,6 +44,7 @@ This vault describes the current React, Express, Prisma, and PostgreSQL applicat
 ## Decisions
 
 - [[Manager Role Permissions Proposal]]
+- [[Credit Card Surcharge Proposal]]
 
 ## Critical Dependency Chains
 

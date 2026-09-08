@@ -109,6 +109,7 @@ const clientIdentitySelect = {
   dateOfBirth: true,
   maritalStatus: true,
   address: true,
+  province: true,
   preferredLanguage: true,
   identificationType: true,
   identificationNumber: true,
@@ -142,6 +143,10 @@ const fields = {
 // Prisma enum only long enough for legacy migrations to read old rows; no
 // client-facing API may create or restore that invalid hybrid state.
 const CLIENT_STATUSES = ["Active", "Inactive", "Closed"];
+
+const CANADIAN_PROVINCE_CODES = new Set([
+  "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT",
+]);
 
 const controller = createCrudController({
   model: "client",
@@ -978,6 +983,19 @@ export function clientPayload(body, existing = null) {
   const address = Object.hasOwn(body, "address")
     ? String(body.address || "").trim() || null
     : existing?.address || null;
+  // Structured, unlike the free-text address above — billing logic (the
+  // Quebec credit-card-surcharge exclusion) keys off this reliably. See
+  // docs/Decisions/Credit Card Surcharge Proposal.md.
+  const province = Object.hasOwn(body, "province")
+    ? String(body.province || "").trim().toUpperCase() || null
+    : existing?.province || null;
+  if (province && !CANADIAN_PROVINCE_CODES.has(province)) {
+    throw createHttpError(
+      400,
+      "Province must be a valid Canadian province/territory code (e.g. ON, QC, BC).",
+      "VALIDATION_ERROR",
+    );
+  }
   const maritalStatus = Object.hasOwn(body, "maritalStatus")
     ? normalizeMaritalStatus(body.maritalStatus)
     : existing?.maritalStatus || null;
@@ -1023,6 +1041,7 @@ export function clientPayload(body, existing = null) {
     dateOfBirth,
     maritalStatus,
     address,
+    province,
     status,
     preferredLanguage: text("preferredLanguage", 100),
     identificationType: text("identificationType", 100),

@@ -68,6 +68,38 @@ function clientSnapshot(client) {
   };
 }
 
+// Shared by both the immediate-method path (staff already knows how the
+// client will pay) and the deferred path (fireInstallment creates an
+// AwaitingPaymentMethod placeholder; the client's own portal choice calls
+// this again once they pick). One place, so the Quebec exclusion and the
+// rate lookup can never drift between the two callers. See
+// docs/Decisions/Credit Card Surcharge Proposal.md.
+async function resolveOnlineMethodSurcharge(agencyId, { onlineMethod, quickBooksSettings, clientProvince, total }) {
+  let surcharge = null;
+  if (onlineMethod === "card" || onlineMethod === "bankTransfer") {
+    const isCard = onlineMethod === "card";
+    const ratePercent = Number(isCard ? quickBooksSettings.cardSurchargeRatePercent : quickBooksSettings.bankTransferFeeRatePercent);
+    // Quebec's Consumer Protection Act bans credit-card surcharging
+    // outright; the bank-transfer fee is held to the same exclusion here
+    // for consistency rather than drawing a distinction not confirmed
+    // during the agency's compliance review.
+    if (clientProvince !== "QC" && ratePercent > 0) {
+      const surchargeCategory = await requireFeeCategory(agencyId, isCard ? "card-surcharge" : "bank-transfer-fee", { requireMapping: true });
+      const surchargeAmount = money((total * ratePercent) / 100);
+      if (surchargeAmount > 0) surcharge = { category: surchargeCategory, amount: surchargeAmount };
+    }
+  }
+  // QuickBooks' own mechanism for restricting which method its hosted "Pay
+  // now" page offers — defaults to both open, matching every caller from
+  // before this surcharge feature existed.
+  const allowedOnlineMethods = onlineMethod === "card"
+    ? { card: true, bankTransfer: false }
+    : onlineMethod === "bankTransfer"
+      ? { card: false, bankTransfer: true }
+      : { card: true, bankTransfer: true };
+  return { surcharge, allowedOnlineMethods, grandTotal: money(total + (surcharge?.amount || 0)) };
+}
+
 function normalizeIdempotencyKey(value) {
   return String(value || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
 }
@@ -114,6 +146,19 @@ export async function createInvoiceRecord(agencyId, {
   idempotencyKey = null,
   accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS,
   discountAmount = 0,
+  // "card" | "bankTransfer" | null (null = every existing caller — no
+  // surcharge, both online methods left open on the hosted QuickBooks
+  // page, same as before this existed). Only meaningful for the
+  // QuickBooks-hosted online payment path; ignored for CASH invoices,
+  // which never go through that page at all. See
+  // docs/Decisions/Credit Card Surcharge Proposal.md.
+  onlineMethod = null,
+  // fireInstallment sets this — no one is present to ask the client how
+  // they'll pay when an installment fires automatically, so the invoice is
+  // created as a placeholder and finalized later via
+  // finalizeAwaitingPaymentMethodInvoice, once the client chooses in the
+  // portal.
+  deferMethodChoice = false,
 }) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   if (operationKey) {
@@ -148,6 +193,53 @@ export async function createInvoiceRecord(agencyId, {
   // Freeze the people and formula before the invoice exists, so a later
   // case transfer or plan edit only ever applies to later invoices.
   const incentiveSnapshot = await buildInvoiceIncentiveSnapshot(agencyId, caseId, caseItem.caseType);
+
+  // fireInstallment's automatic path has no one to ask "how will you pay?"
+  // at generation time — it defers that choice to the client, who picks in
+  // the portal (finalizeAwaitingPaymentMethodInvoice below completes this
+  // same row once they do). Nothing about the base amount/tax/discount
+  // computed above changes; only the QuickBooks invoice itself waits. See
+  // docs/Decisions/Credit Card Surcharge Proposal.md.
+  if (deferMethodChoice && accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS) {
+    if (!quickBooksSettings || quickBooksSettings.status !== "connected") {
+      throw createHttpError(409, "Connect QuickBooks in Settings before creating invoices.", "QBO_NOT_CONNECTED");
+    }
+    if (taxable && !quickBooksSettings.taxableTaxCodeId) {
+      throw createHttpError(409, "Choose the QuickBooks HST/GST code in Settings before creating a taxable invoice.", "QBO_TAX_MAPPING_REQUIRED");
+    }
+    return prisma.caseInvoice.create({
+      data: {
+        agencyId,
+        caseId,
+        clientId,
+        paymentType,
+        description,
+        invoiceNumber,
+        accountingProvider,
+        currency: agency.defaultCurrency || "CAD",
+        subtotalAmount: subtotal,
+        discountAmount: discount,
+        taxAmount,
+        taxRatePercent,
+        agencySnapshot: agencySnapshot(agency, billing),
+        clientSnapshot: clientSnapshot(clientRecord),
+        amount: total,
+        balance: total,
+        status: "AwaitingPaymentMethod",
+        dueDate: dueDate ? new Date(dueDate) : null,
+        createdById: actorUserId,
+        creationIdempotencyKey: operationKey,
+        lines: {
+          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: subtotal, discount, taxable, taxRate: taxRatePercent, taxAmount, lineTotal: total }],
+        },
+        ...(incentiveSnapshot ? {
+          creditCursor: { create: { agencyId, lastCreditedBalance: total } },
+          incentiveSnapshot: { create: incentiveSnapshot },
+        } : {}),
+      },
+      include: { lines: true },
+    });
+  }
 
   if (accountingProvider === ACCOUNTING_PROVIDERS.CASH) {
     return prisma.caseInvoice.create({
@@ -190,6 +282,13 @@ export async function createInvoiceRecord(agencyId, {
     throw createHttpError(409, "Choose the QuickBooks HST/GST code in Settings before creating a taxable invoice.", "QBO_TAX_MAPPING_REQUIRED");
   }
 
+  const { surcharge, allowedOnlineMethods, grandTotal } = await resolveOnlineMethodSurcharge(agencyId, {
+    onlineMethod,
+    quickBooksSettings,
+    clientProvince: clientRecord.province,
+    total,
+  });
+
   // Validate the cached customer link before every new invoice. A numeric
   // QBO id can become stale or resolve to a different contact after a
   // company reconnect/import; merely checking that the column is non-null
@@ -209,9 +308,13 @@ export async function createInvoiceRecord(agencyId, {
       dueDate: dueDate || undefined,
       invoiceNumber,
       taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
-      expectedTotal: total,
+      expectedTotal: grandTotal,
       discountAmount: discount,
-      lines: [{ itemId: category.qboItemId, description, amount: subtotal, taxable }],
+      lines: [
+        { itemId: category.qboItemId, description, amount: subtotal, taxable },
+        ...(surcharge ? [{ itemId: surcharge.category.qboItemId, description: surcharge.category.name, amount: surcharge.amount, taxable: false }] : []),
+      ],
+      allowedOnlineMethods,
       requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
   } catch (error) {
@@ -237,9 +340,13 @@ export async function createInvoiceRecord(agencyId, {
       dueDate: dueDate || undefined,
       invoiceNumber,
       taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
-      expectedTotal: total,
+      expectedTotal: grandTotal,
       discountAmount: discount,
-      lines: [{ itemId: category.qboItemId, description, amount: subtotal, taxable }],
+      lines: [
+        { itemId: category.qboItemId, description, amount: subtotal, taxable },
+        ...(surcharge ? [{ itemId: surcharge.category.qboItemId, description: surcharge.category.name, amount: surcharge.amount, taxable: false }] : []),
+      ],
+      allowedOnlineMethods,
       requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
   }
@@ -273,7 +380,10 @@ export async function createInvoiceRecord(agencyId, {
         creationIdempotencyKey: operationKey,
         lastSyncedAt: new Date(),
         lines: {
-          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: subtotal, discount, taxable, taxRate: taxRatePercent, taxAmount: money(invoice.totalTax), lineTotal: invoice.totalAmount }],
+          create: [
+            { agencyId, feeCategory: paymentType, description, unitAmount: subtotal, discount, taxable, taxRate: taxRatePercent, taxAmount: money(invoice.totalTax), lineTotal: total },
+            ...(surcharge ? [{ agencyId, feeCategory: surcharge.category.code, description: surcharge.category.name, unitAmount: surcharge.amount, discount: 0, taxable: false, taxRate: 0, taxAmount: 0, lineTotal: surcharge.amount }] : []),
+          ],
         },
         ...(incentiveSnapshot ? {
           creditCursor: { create: { agencyId, lastCreditedBalance: invoice.balance } },
@@ -298,7 +408,124 @@ export async function createInvoiceRecord(agencyId, {
   }
 }
 
-export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, discountAmount = 0, dueDate, actorUserId, idempotencyKey = null, notifyClient = true, accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS }) {
+// Completes an AwaitingPaymentMethod invoice (see createInvoiceRecord's
+// deferMethodChoice branch above) once the client has picked how they'll
+// pay — called from the client portal's choose-method endpoint. Adds the
+// surcharge, creates the real QuickBooks invoice restricted to that one
+// method, and turns the placeholder row into a normal invoice in place
+// (same id, same invoice number) rather than creating a second one.
+export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId, onlineMethod, actorUserId }) {
+  if (onlineMethod !== "card" && onlineMethod !== "bankTransfer") {
+    throw createHttpError(400, "paymentMethod must be \"card\" or \"bankTransfer\".", "VALIDATION_ERROR");
+  }
+  const existing = await prisma.caseInvoice.findFirst({
+    where: { id: invoiceId, agencyId, status: "AwaitingPaymentMethod" },
+  });
+  if (!existing) throw createHttpError(404, "This invoice is not awaiting a payment method choice.", "NOT_FOUND");
+
+  const [agency, clientRecord, quickBooksSettings] = await Promise.all([
+    prisma.agency.findUnique({ where: { id: agencyId } }),
+    prisma.client.findFirst({ where: { id: existing.clientId, agencyId } }),
+    prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } }),
+  ]);
+  if (!agency || !clientRecord) throw createHttpError(404, "Agency or client not found.", "NOT_FOUND");
+  if (!quickBooksSettings || quickBooksSettings.status !== "connected") {
+    throw createHttpError(409, "QuickBooks is not connected for this workspace.", "QBO_NOT_CONNECTED");
+  }
+
+  const category = await requireFeeCategory(agencyId, existing.paymentType, { requireMapping: true });
+  const { surcharge, allowedOnlineMethods, grandTotal } = await resolveOnlineMethodSurcharge(agencyId, {
+    onlineMethod,
+    quickBooksSettings,
+    clientProvince: clientRecord.province,
+    total: Number(existing.amount),
+  });
+
+  let client = await syncClientToQuickBooks(agencyId, existing.clientId);
+  if (!client?.qbCustomerId) {
+    throw createHttpError(409, client?.qbSyncError || "This client could not be linked to QuickBooks yet.", "QBO_CLIENT_NOT_LINKED");
+  }
+
+  const taxable = Number(existing.taxAmount) > 0;
+  const baseInvoicePayload = {
+    itemId: category.qboItemId,
+    description: existing.description,
+    amount: Number(existing.subtotalAmount),
+    dueDate: existing.dueDate ? existing.dueDate.toISOString().slice(0, 10) : undefined,
+    invoiceNumber: existing.invoiceNumber,
+    taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
+    expectedTotal: grandTotal,
+    discountAmount: Number(existing.discountAmount),
+    lines: [
+      { itemId: category.qboItemId, description: existing.description, amount: Number(existing.subtotalAmount), taxable },
+      ...(surcharge ? [{ itemId: surcharge.category.qboItemId, description: surcharge.category.name, amount: surcharge.amount, taxable: false }] : []),
+    ],
+    allowedOnlineMethods,
+    requestId: `finalize-${existing.id}`,
+  };
+
+  let invoice;
+  try {
+    invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
+  } catch (error) {
+    if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
+    const resynced = await syncClientToQuickBooks(agencyId, existing.clientId);
+    if (!resynced?.qbCustomerId) throw error;
+    client = resynced;
+    invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.caseInvoiceLine.deleteMany({ where: { caseInvoiceId: existing.id } });
+    return tx.caseInvoice.update({
+      where: { id: existing.id },
+      data: {
+        clientId: client.id,
+        currency: invoice.currency || agency.defaultCurrency || "CAD",
+        taxAmount: money(invoice.totalTax),
+        qbInvoiceId: invoice.id,
+        qbInvoiceNumber: invoice.docNumber,
+        qbInvoiceLink: invoice.invoiceLink,
+        qbSyncToken: invoice.syncToken,
+        amount: invoice.totalAmount,
+        balance: invoice.balance,
+        status: deriveCaseInvoiceStatus({ balance: invoice.balance, amount: invoice.totalAmount, dueDate: invoice.dueDate }),
+        lastSyncedAt: new Date(),
+        lines: {
+          create: [
+            { agencyId, feeCategory: existing.paymentType, description: existing.description, unitAmount: Number(existing.subtotalAmount), discount: Number(existing.discountAmount), taxable, taxRate: Number(existing.taxRatePercent), taxAmount: money(invoice.totalTax), lineTotal: Number(existing.amount) },
+            ...(surcharge ? [{ agencyId, feeCategory: surcharge.category.code, description: surcharge.category.name, unitAmount: surcharge.amount, discount: 0, taxable: false, taxRate: 0, taxAmount: 0, lineTotal: surcharge.amount }] : []),
+          ],
+        },
+      },
+      include: { lines: true },
+    });
+  });
+
+  // The invoice's total just grew from the base amount to base+surcharge —
+  // nothing was actually collected or refunded, so re-baseline the credit
+  // cursor to the new balance rather than letting creditCaseInvoiceCollection
+  // read the jump as a negative delta (a false "refund").
+  await resetCreditCursor(agencyId, existing.id, Number(invoice.balance));
+
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: client.id,
+    caseId: existing.caseId,
+    action: "invoice.payment_method_chosen",
+    details: `${onlineMethod === "card" ? "Credit card" : "Bank transfer"} selected for invoice ${existing.invoiceNumber} — $${Number(invoice.totalAmount).toFixed(2)} total`,
+    entityType: "caseInvoice",
+    entityId: existing.id,
+  });
+
+  return updated;
+}
+
+export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, discountAmount = 0, dueDate, actorUserId, idempotencyKey = null, notifyClient = true, accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS, onlineMethod = null }) {
+  if (onlineMethod !== null && onlineMethod !== "card" && onlineMethod !== "bankTransfer") {
+    throw createHttpError(400, "paymentMethod must be \"card\", \"bankTransfer\", or omitted.", "VALIDATION_ERROR");
+  }
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   if (operationKey) {
     const existing = await prisma.caseInvoice.findUnique({
@@ -332,15 +559,19 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     actorUserId,
     idempotencyKey: operationKey,
     accountingProvider,
+    onlineMethod: accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS ? onlineMethod : null,
   });
 
+  const methodNote = onlineMethod === "card" ? " (client paying by credit card, surcharge applied)"
+    : onlineMethod === "bankTransfer" ? " (client paying by bank transfer, fee applied)"
+    : "";
   await recordActivity({
     agencyId,
     userId: actorUserId,
     clientId: row.clientId,
     caseId,
     action: "invoice.created",
-    details: `${category.name} invoice ${row.invoiceNumber} for $${Number(row.amount).toFixed(2)} created in ${row.accountingProvider === ACCOUNTING_PROVIDERS.CASH ? "CaseDesk Cash" : "QuickBooks"} — ${trimmedDescription}`,
+    details: `${category.name} invoice ${row.invoiceNumber} for $${Number(row.amount).toFixed(2)} created in ${row.accountingProvider === ACCOUNTING_PROVIDERS.CASH ? "CaseDesk Cash" : "QuickBooks"} — ${trimmedDescription}${methodNote}`,
     entityType: "caseInvoice",
     entityId: row.id,
   });

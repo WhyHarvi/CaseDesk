@@ -7,12 +7,20 @@ export const DEFAULT_FEE_CATEGORIES = [
   { code: "disbursement", name: "Government fee disbursements", description: "Government, IRCC and third-party disbursements.", kind: "Government", countsTowardRevenue: false, sortOrder: 20 },
   { code: "consultation", name: "Consultation fees", description: "Initial and follow-up consultation charges.", kind: "Consultation", countsTowardRevenue: false, sortOrder: 30 },
   { code: "other", name: "Other fees", description: "Other client charges configured by the agency.", kind: "Other", countsTowardRevenue: false, sortOrder: 40 },
+  // Pass-through processing costs, not agency income — countsTowardRevenue
+  // stays false so incentive/revenue-contest crediting isn't affected, same
+  // as disbursement/government fees above. See
+  // docs/Decisions/Credit Card Surcharge Proposal.md.
+  { code: "card-surcharge", name: "Credit card surcharge", description: "Card-network surcharge passed through to clients who pay by credit card.", kind: "CardSurcharge", countsTowardRevenue: false, sortOrder: 50 },
+  { code: "bank-transfer-fee", name: "Bank transfer fee", description: "QuickBooks bank-transfer processing fee passed through to clients who pay by bank transfer.", kind: "BankTransferFee", countsTowardRevenue: false, sortOrder: 60 },
 ];
 
 function legacyMapping(settings, code) {
   if (code === "fees") return { qboItemId: settings?.feeItemId || null, qboItemName: settings?.feeItemName || null };
   if (code === "disbursement") return { qboItemId: settings?.disbursementItemId || null, qboItemName: settings?.disbursementItemName || null };
   if (code === "consultation") return { qboItemId: settings?.consultFeeItemId || null, qboItemName: settings?.consultFeeItemName || null };
+  if (code === "card-surcharge") return { qboItemId: settings?.cardSurchargeItemId || null, qboItemName: settings?.cardSurchargeItemName || null };
+  if (code === "bank-transfer-fee") return { qboItemId: settings?.bankTransferFeeItemId || null, qboItemName: settings?.bankTransferFeeItemName || null };
   return { qboItemId: null, qboItemName: null };
 }
 

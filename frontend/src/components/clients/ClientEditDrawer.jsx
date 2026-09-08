@@ -5,6 +5,22 @@ import api from "../../services/api";
 import { clientNameParts, composePersonFullName } from "../../utils/personName";
 import { maritalStatusOptions } from "../case-profile/applicantProfileOptions";
 
+const CANADIAN_PROVINCES = [
+  ["AB", "Alberta"],
+  ["BC", "British Columbia"],
+  ["MB", "Manitoba"],
+  ["NB", "New Brunswick"],
+  ["NL", "Newfoundland and Labrador"],
+  ["NS", "Nova Scotia"],
+  ["NT", "Northwest Territories"],
+  ["NU", "Nunavut"],
+  ["ON", "Ontario"],
+  ["PE", "Prince Edward Island"],
+  ["QC", "Quebec"],
+  ["SK", "Saskatchewan"],
+  ["YT", "Yukon"],
+];
+
 const defaultFormState = {
   givenNames: "",
   familyName: "",
@@ -14,6 +30,7 @@ const defaultFormState = {
   dateOfBirth: "",
   maritalStatus: "",
   address: "",
+  province: "",
   preferredLanguage: "",
   identificationType: "",
   identificationNumber: "",
@@ -39,6 +56,7 @@ function clientToFormState(client) {
     dateOfBirth: formatDateForInput(client.dateOfBirth),
     maritalStatus: client.maritalStatus || "",
     address: client.address || "",
+    province: client.province || "",
     preferredLanguage: client.preferredLanguage || "",
     identificationType: client.identificationType || "",
     identificationNumber: client.identificationNumber || "",
@@ -231,6 +249,15 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
                 <label className="block md:col-span-2">
                   <span className="mb-2 block text-sm font-medium text-slate-700">Address</span>
                   <textarea name="address" rows="3" value={formState.address} onChange={handleInputChange} className="w-full resize-none rounded-2xl border border-slate-200/90 bg-white/90 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="Toronto, ON" />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Province / territory</span>
+                  <select name="province" value={formState.province} onChange={handleInputChange} className="select-field h-12 w-full py-0">
+                    <option value="">Not set</option>
+                    {CANADIAN_PROVINCES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+                  </select>
+                  <span className="mt-1.5 block text-xs text-slate-400">Used for billing rules that vary by province, like credit-card surcharge eligibility.</span>
                 </label>
               </div>
             </section>

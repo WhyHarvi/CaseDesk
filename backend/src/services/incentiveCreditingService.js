@@ -5,6 +5,10 @@ import { evaluateCaseTimelineLegs } from "./incentiveTimelineService.js";
 
 const planInclude = { roleShares: true, tiers: { orderBy: { minCumulativeAmount: "asc" } } };
 
+function money(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
 export async function resolvePlan(agencyId, caseType) {
   const specific = caseType
     ? await prisma.incentivePlan.findFirst({ where: { agencyId, caseType, isActive: true }, include: planInclude })
@@ -421,9 +425,17 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
   const newBalanceNumber = Number(newBalance);
   const invoice = await prisma.caseInvoice.findFirst({
     where: { id: caseInvoiceId, caseId, agencyId },
-    select: { id: true, caseId: true, balance: true, createdAt: true, incentiveSnapshot: true, case: { select: { caseType: true } } },
+    select: { id: true, caseId: true, balance: true, amount: true, subtotalAmount: true, taxAmount: true, createdAt: true, incentiveSnapshot: true, case: { select: { caseType: true } } },
   });
   if (!invoice) return { credited: false, reason: "invoice_not_found" };
+  // A card/bank-transfer surcharge line (see docs/Decisions/Credit Card
+  // Surcharge Proposal.md) inflates `amount`/`balance` beyond the billable
+  // subtotal+tax — it's a pass-through processing-cost reimbursement, not
+  // revenue, and must never inflate incentive pools or the revenue
+  // contest. Every dollar collected above this ceiling (the surcharge
+  // portion) is excluded from crediting below, first-dollars-to-the-base
+  // waterfall style, so partial payments still credit correctly.
+  const revenueEligibleCeiling = money(Number(invoice.subtotalAmount) + Number(invoice.taxAmount));
 
   let snapshot = invoice.incentiveSnapshot;
   if (!snapshot) {
@@ -485,6 +497,25 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     return { credited: false, reason: "no_plan_at_invoice_creation", claimed: claim.count === 1 };
   }
 
+  // Waterfall the collected amount against the revenue-eligible ceiling —
+  // dollars are credited to the base fee first, so a payment that finally
+  // clears a surcharge line on an already-mostly-paid invoice contributes
+  // nothing further here, while a normal payment behaves exactly as
+  // before this ceiling existed (delta === eligibleDelta whenever the
+  // invoice carries no surcharge at all).
+  const previousCollected = money(Number(invoice.amount) - Number(cursor.lastCreditedBalance));
+  const nowCollected = money(Number(invoice.amount) - newBalanceNumber);
+  const eligibleDelta = money(
+    Math.max(0, Math.min(nowCollected, revenueEligibleCeiling) - Math.min(previousCollected, revenueEligibleCeiling)),
+  );
+  if (eligibleDelta === 0) {
+    const claim = await prisma.caseInvoiceCreditCursor.updateMany({
+      where: { caseInvoiceId, agencyId, lastCreditedBalance: cursor.lastCreditedBalance },
+      data: { lastCreditedBalance: newBalanceNumber },
+    });
+    return { credited: false, reason: "surcharge_only_collection", claimed: claim.count === 1 };
+  }
+
   let verifiedPaymentProcessorId = null;
   if (paymentProcessorUserId) {
     const processor = await prisma.user.findFirst({
@@ -499,7 +530,7 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     logger.warn("incentive.payment_processor_missing", { agencyId, caseId, caseInvoiceId, trigger });
   }
 
-  const { pool } = await computeSnapshotPool(snapshot, { agencyId, caseId, delta });
+  const { pool } = await computeSnapshotPool(snapshot, { agencyId, caseId, delta: eligibleDelta });
   const creditedAt = new Date();
   const rows = computeSnapshotSplits(snapshot, pool, { paymentProcessorUserId: verifiedPaymentProcessorId }).map((entry) => ({
     agencyId,
@@ -511,7 +542,7 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     caseRoleId: entry.caseRoleId,
     roleNameSnapshot: entry.roleNameSnapshot,
     sharePercentApplied: entry.sharePercentApplied,
-    sourceAmountCollected: delta,
+    sourceAmountCollected: eligibleDelta,
     creditedAmount: entry.amount,
     triggerSource: trigger,
     triggerRef: `balance:${newBalanceNumber.toFixed(2)}`,
@@ -520,7 +551,7 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     planNameSnapshot: snapshot.planName,
     planVersionSnapshot: snapshot.planVersion,
     formulaTypeSnapshot: snapshot.formulaType,
-    calculationSnapshot: { formulaType: snapshot.formulaType, grossPool: pool, matchedRate: null },
+    calculationSnapshot: { formulaType: snapshot.formulaType, grossPool: pool, matchedRate: null, rawBalanceDelta: delta },
   }));
 
   const result = await prisma.$transaction(async (tx) => {
@@ -530,13 +561,13 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     });
     if (claim.count !== 1) return { credited: false, reason: "lost_race" };
     if (rows.length) await tx.incentiveLedgerEntry.createMany({ data: rows });
-    await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource: trigger,
+    await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta: eligibleDelta, triggerSource: trigger,
       triggerRef: `${caseInvoiceId}:${Number(cursor.lastCreditedBalance).toFixed(2)}:${newBalanceNumber.toFixed(2)}` }, tx);
     return { credited: true, entryCount: rows.length };
   });
 
   if (result.credited) {
-    logger.info("incentive.credited", { agencyId, caseId, caseInvoiceId, trigger, delta, entryCount: result.entryCount });
+    logger.info("incentive.credited", { agencyId, caseId, caseInvoiceId, trigger, delta, eligibleDelta, entryCount: result.entryCount });
     // Gives FIRST_PAYMENT_COLLECTED-anchored timeline legs a hook, and a
     // free retry sweep via the existing reconcilePendingIncentiveCredits
     // worker (this function is already called from there).

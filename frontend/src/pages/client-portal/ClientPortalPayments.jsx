@@ -1,6 +1,6 @@
 import { ArrowDownLeft, ArrowUpRight, Banknote, CalendarClock, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText, RotateCcw, Wallet } from "lucide-react";
-import { useEffect, useState } from "react";
-import { downloadPortalInvoicePdf, getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
+import { useCallback, useEffect, useState } from "react";
+import { choosePortalInvoicePaymentMethod, downloadPortalInvoicePdf, getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
 import ClientPortalSkeleton, { GlassCard } from "../../components/client-portal/ClientPortalSkeleton";
 import ClientPortalEmptyState from "../../components/client-portal/ClientPortalEmptyState";
@@ -8,7 +8,7 @@ import ClientPaymentCard, { formatMoney } from "../../components/client-portal/C
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
 import { formatPortalDate } from "../../components/client-portal/ClientStatusCard";
 
-const INVOICE_STATUS_LABEL = { Open: "Awaiting payment", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", PartiallyRefunded: "Partially refunded", Overdue: "Overdue" };
+const INVOICE_STATUS_LABEL = { Open: "Awaiting payment", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", PartiallyRefunded: "Partially refunded", Overdue: "Overdue", AwaitingPaymentMethod: "Choose payment method" };
 const INVOICE_STATUS_TONE = {
   Open: "bg-slate-100 text-slate-600",
   PartiallyPaid: "bg-amber-50 text-amber-700",
@@ -16,8 +16,56 @@ const INVOICE_STATUS_TONE = {
   Refunded: "bg-violet-50 text-violet-700",
   PartiallyRefunded: "bg-fuchsia-50 text-fuchsia-700",
   Overdue: "bg-rose-50 text-rose-700",
+  AwaitingPaymentMethod: "bg-sky-50 text-sky-700",
 };
 const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Government fee" };
+
+// Only shown for an invoice CaseDesk invoiced automatically (a payment
+// schedule installment) with no one present to ask how the client will
+// pay — see fireInstallment's deferMethodChoice and
+// docs/Decisions/Credit Card Surcharge Proposal.md. Bank transfer and
+// credit card each carry their own disclosed fee, shown here before the
+// client commits; every other method (e-transfer, cheque, etc.) is handled
+// directly with the agency, outside CaseDesk.
+function ChoosePaymentMethod({ invoice, surchargeRates, onChosen }) {
+  const [method, setMethod] = useState(null);
+  const [error, setError] = useState("");
+  const base = Number(invoice.balance);
+  const cardTotal = base * (1 + (surchargeRates?.cardSurchargeRatePercent ?? 2.4) / 100);
+  const bankTotal = base * (1 + (surchargeRates?.bankTransferFeeRatePercent ?? 1) / 100);
+
+  async function choose(value) {
+    setMethod(value);
+    setError("");
+    try {
+      await choosePortalInvoicePaymentMethod(invoice.id, value);
+      await onChosen();
+    } catch (reason) {
+      setError(portalErrorMessage(reason, "That couldn't be saved. Please try again."));
+      setMethod(null);
+    }
+  }
+
+  return (
+    <div className="mt-2.5 rounded-2xl border border-sky-100 bg-sky-50/60 p-3">
+      <p className="text-[11px] font-semibold text-sky-900">How would you like to pay this online?</p>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <button type="button" disabled={Boolean(method)} onClick={() => choose("bankTransfer")} className="flex flex-col items-center gap-1 rounded-xl border border-white bg-white px-2.5 py-2 text-center transition hover:border-sky-300 disabled:opacity-60">
+          {method === "bankTransfer" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-700" /> : <Wallet className="h-3.5 w-3.5 text-sky-700" />}
+          <span className="text-[11px] font-semibold text-slate-800">Bank transfer</span>
+          <span className="text-[11px] font-semibold tabular-nums text-slate-600">{formatPortalMoney(bankTotal)}</span>
+        </button>
+        <button type="button" disabled={Boolean(method)} onClick={() => choose("card")} className="flex flex-col items-center gap-1 rounded-xl border border-white bg-white px-2.5 py-2 text-center transition hover:border-sky-300 disabled:opacity-60">
+          {method === "card" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-700" /> : <CreditCard className="h-3.5 w-3.5 text-sky-700" />}
+          <span className="text-[11px] font-semibold text-slate-800">Credit card</span>
+          <span className="text-[11px] font-semibold tabular-nums text-slate-600">{formatPortalMoney(cardTotal)}</span>
+        </button>
+      </div>
+      <p className="mt-2 text-[10px] leading-4 text-sky-800/80">Each option includes its own processing fee. Prefer e-transfer, cheque, or another method? Contact your agency directly.</p>
+      {error ? <p className="mt-1.5 text-[11px] font-medium text-rose-600">{error}</p> : null}
+    </div>
+  );
+}
 
 function formatPortalMoney(value) {
   return Number(value).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
@@ -77,14 +125,12 @@ export default function ClientPortalPayments() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let active = true;
-    getPortalPayments()
-      .then((result) => active && setData(result))
-      .catch((reason) => active && setError(portalErrorMessage(reason, "Your payment details could not be loaded.")))
-      .finally(() => active && setLoading(false));
-    return () => { active = false; };
-  }, []);
+  const load = useCallback(() => getPortalPayments()
+    .then((result) => setData(result))
+    .catch((reason) => setError(portalErrorMessage(reason, "Your payment details could not be loaded.")))
+    .finally(() => setLoading(false)), []);
+
+  useEffect(() => { load(); }, [load]);
 
   if (loading) return <ClientPortalSkeleton rows={3} />;
 
@@ -172,6 +218,9 @@ export default function ClientPortalPayments() {
                           >
                             <Wallet className="h-3 w-3" /> Pay now
                           </a>
+                        ) : null}
+                        {invoice.status === "AwaitingPaymentMethod" ? (
+                          <ChoosePaymentMethod invoice={invoice} surchargeRates={data.surchargeRates} onChosen={load} />
                         ) : null}
                       </div>
                     </div>

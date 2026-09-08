@@ -49,6 +49,14 @@ export function getPortalTimeline() {
   return api.get("/client-portal/timeline").then((response) => response.data.data);
 }
 
+// "method" is "card" | "bankTransfer" — see docs/Decisions/Credit Card
+// Surcharge Proposal.md. Only valid for an invoice currently
+// AwaitingPaymentMethod (fired automatically by a payment schedule, with no
+// one present to ask at generation time).
+export function choosePortalInvoicePaymentMethod(invoiceId, method) {
+  return api.post(`/client-portal/payments/invoices/${invoiceId}/choose-method`, { method }).then((response) => response.data);
+}
+
 export function updatePortalProfile(changes) {
   return api.patch("/client-portal/profile", changes).then((response) => response.data);
 }

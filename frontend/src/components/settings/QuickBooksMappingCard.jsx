@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Banknote, CalendarClock, Check, ChevronDown, Landmark, Loader2, Percent, Plus, Search, Trash2, X } from "lucide-react";
+import { Banknote, CalendarClock, Check, ChevronDown, CreditCard, Landmark, Loader2, Percent, Plus, Search, Trash2, Wallet, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -43,6 +43,26 @@ const SLOTS = {
     hint: "The paid-booking flow invoices against this item. Posts to income.",
     icon: CalendarClock,
     tint: "bg-fuchsia-50 text-fuchsia-600",
+    accountClassification: "Revenue",
+    accountHint: "income",
+  },
+  cardSurcharge: {
+    field: "cardSurchargeItemId",
+    nameField: "cardSurchargeItemName",
+    label: "Credit card surcharge",
+    hint: "Passed-through card-processing cost, not agency revenue — pick (or create) an \"Other Income\" account in QuickBooks, kept separate from professional fees.",
+    icon: CreditCard,
+    tint: "bg-rose-50 text-rose-600",
+    accountClassification: "Revenue",
+    accountHint: "income",
+  },
+  bankTransferFee: {
+    field: "bankTransferFeeItemId",
+    nameField: "bankTransferFeeItemName",
+    label: "Bank transfer fee",
+    hint: "Passed-through bank-transfer processing cost, not agency revenue — pick (or create) an \"Other Income\" account in QuickBooks, kept separate from professional fees.",
+    icon: Wallet,
+    tint: "bg-sky-50 text-sky-600",
     accountClassification: "Revenue",
     accountHint: "income",
   },
@@ -508,27 +528,27 @@ function AdditionalFeeCategories({ items }) {
   );
 }
 
-function RefundFeeRateField({ mapping, onSaved }) {
-  const [value, setValue] = useState(String(mapping.refundFeeRatePercent ?? 2.99));
+function RateField({ mapping, onSaved, field, defaultValue, max, title, hint, tint = "bg-rose-50 text-rose-600", errorLabel }) {
+  const [value, setValue] = useState(String(mapping[field] ?? defaultValue));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
 
   async function save() {
     const percent = Number(value);
-    if (!Number.isFinite(percent) || percent < 0 || percent > 20) {
-      setError("Enter a rate between 0 and 20.");
+    if (!Number.isFinite(percent) || percent < 0 || percent > max) {
+      setError(`Enter a rate between 0 and ${max}.`);
       return;
     }
     setSaving(true);
     setError("");
     try {
-      const patch = await updateQuickBooksMapping({ refundFeeRatePercent: percent });
+      const patch = await updateQuickBooksMapping({ [field]: percent });
       onSaved(patch);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (reason) {
-      setError(reason.response?.data?.message || "Could not save the refund fee rate.");
+      setError(reason.response?.data?.message || `Could not save the ${errorLabel} rate.`);
     } finally {
       setSaving(false);
     }
@@ -536,21 +556,19 @@ function RefundFeeRateField({ mapping, onSaved }) {
 
   return (
     <div className="flex items-start gap-3 border-t border-slate-100 pt-5">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tint}`}>
         <Percent className="h-[18px] w-[18px]" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-slate-900">Refund processing fee rate</p>
-        <p className="mt-0.5 text-xs text-slate-500">
-          QuickBooks' per-transaction rate for card/invoice payments — used to estimate what a client actually gets back after a refund (applied twice: the original charge's fee, which is never returned, plus a new fee on the refund itself). Check Settings → Payments in QuickBooks Online for your exact contracted rate.
-        </p>
+        <p className="text-sm font-semibold text-slate-900">{title}</p>
+        <p className="mt-0.5 text-xs text-slate-500">{hint}</p>
         <div className="mt-3 flex items-center gap-2">
           <div className="relative w-28">
             <input
               type="number"
               step="0.01"
               min="0"
-              max="20"
+              max={max}
               value={value}
               onChange={(event) => setValue(event.target.value)}
               className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-3 pr-7 text-sm text-slate-900 outline-none transition focus:border-sky-400"
@@ -623,6 +641,8 @@ export default function QuickBooksMappingCard() {
           <ItemPicker slotKey="fee" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="disbursement" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="consult" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
+          <ItemPicker slotKey="cardSurcharge" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
+          <ItemPicker slotKey="bankTransferFee" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <TaxCodePicker
             mapping={mapping}
             taxCodes={taxCodes}
@@ -630,7 +650,37 @@ export default function QuickBooksMappingCard() {
             onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))}
             onTaxCodesReloaded={(result) => { setTaxCodes(result.taxCodes); setUsingSalesTax(result.usingSalesTax); }}
           />
-          <RefundFeeRateField mapping={mapping} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
+          <RateField
+            mapping={mapping}
+            onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))}
+            field="refundFeeRatePercent"
+            defaultValue={2.99}
+            max={20}
+            title="Refund processing fee rate"
+            hint="QuickBooks' per-transaction rate for card/invoice payments — used to estimate what a client actually gets back after a refund (applied twice: the original charge's fee, which is never returned, plus a new fee on the refund itself). Check Settings → Payments in QuickBooks Online for your exact contracted rate."
+            errorLabel="refund fee"
+          />
+          <RateField
+            mapping={mapping}
+            onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))}
+            field="cardSurchargeRatePercent"
+            defaultValue={2.4}
+            max={2.4}
+            title="Credit card surcharge rate"
+            hint="Passed on to clients who pay an invoice by credit card, on top of the amount owed. Capped at 2.4% — the Canadian card-network limit (Visa/Mastercard), never a rate the agency sets freely. Must not exceed the agency's actual QuickBooks Payments card cost."
+            errorLabel="card surcharge"
+          />
+          <RateField
+            mapping={mapping}
+            onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))}
+            field="bankTransferFeeRatePercent"
+            defaultValue={1.0}
+            max={10}
+            title="Bank transfer fee rate"
+            hint="Passed on to clients who pay an invoice by bank transfer through QuickBooks' hosted payment page — separate from the existing manual Interac e-transfer flow, which stays fee-free. Set to the agency's actual QuickBooks Payments bank-transfer cost."
+            tint="bg-sky-50 text-sky-600"
+            errorLabel="bank transfer fee"
+          />
           <AdditionalFeeCategories items={items} />
         </div>
       )}

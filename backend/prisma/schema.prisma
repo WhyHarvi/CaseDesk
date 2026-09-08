@@ -1378,6 +1378,21 @@ model AgencyQuickBooksSettings {
   // when estimating a refund (original charge's fee, never returned, plus
   // a new fee on the refund itself) — see refundFeeEstimateService.js.
   refundFeeRatePercent  Decimal  @default(2.99) @map("refund_fee_rate_percent") @db.Decimal(5, 3)
+  // Card-network surcharge cap in Canada is 2.4% (the lesser of that or
+  // actual cost of acceptance) — see docs/Decisions/Credit Card Surcharge
+  // Proposal.md. Kept separate from refundFeeRatePercent: one is what the
+  // agency charges a paying client, the other estimates what a refund
+  // loses — they can legitimately diverge.
+  cardSurchargeRatePercent      Decimal @default(2.4) @map("card_surcharge_rate_percent") @db.Decimal(5, 3)
+  // Bank transfer (QuickBooks' hosted ACH/pre-authorized-debit option, not
+  // the existing manual Interac e-transfer flow) has its own, much lower,
+  // QuickBooks Payments cost — passed through at cost, not a surcharge
+  // subject to the card-network cap above.
+  bankTransferFeeRatePercent    Decimal @default(1.0) @map("bank_transfer_fee_rate_percent") @db.Decimal(5, 3)
+  cardSurchargeItemId           String? @map("card_surcharge_item_id")
+  cardSurchargeItemName         String? @map("card_surcharge_item_name")
+  bankTransferFeeItemId         String? @map("bank_transfer_fee_item_id")
+  bankTransferFeeItemName       String? @map("bank_transfer_fee_item_name")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
   agency                Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -2456,6 +2471,12 @@ model Client {
   dateOfBirth                DateTime?                    @map("date_of_birth")
   maritalStatus              String?                      @map("marital_status")
   address                    String?
+  // Canadian province/territory code (e.g. "ON", "QC") — structured
+  // separately from the free-text address so billing logic can key off it
+  // reliably, notably the Quebec credit-card-surcharge exclusion (Quebec's
+  // Consumer Protection Act bans surcharging outright). See
+  // docs/Decisions/Credit Card Surcharge Proposal.md.
+  province                   String?
   preferredLanguage          String?                      @map("preferred_language")
   identificationType         String?                      @map("identification_type")
   identificationNumber       String?                      @map("identification_number")
