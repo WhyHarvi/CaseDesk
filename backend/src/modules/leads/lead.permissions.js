@@ -52,7 +52,7 @@ export function leadSegmentWhere(segment = "STANDARD") {
 }
 
 export function canCreateLead(req) {
-  return ["admin", "consultant", "frontdesk"].includes(req.auth.role);
+  return ["admin", "consultant", "frontdesk", "manager"].includes(req.auth.role);
 }
 
 // Workflow fields (stage, priority) an admin can always edit; a consultant

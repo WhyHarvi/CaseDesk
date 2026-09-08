@@ -17,7 +17,7 @@ const router = Router();
 // and case for viewing purposes (see portalAccessService.js), which would
 // otherwise newly expose note read/write to them too. Notes are their own
 // capability (internalNotes), separate from client/case visibility.
-router.use(requireRole("admin", "consultant", "frontdesk"));
+router.use(requireRole("admin", "consultant", "frontdesk", "manager"));
 router.use(requirePortalCapability("internalNotes"));
 
 router.get("/", asyncHandler(listNotes));

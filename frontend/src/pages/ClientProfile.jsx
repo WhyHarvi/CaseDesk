@@ -550,7 +550,7 @@ export default function ClientProfile() {
   );
   const assignmentOptions = useMemo(() => {
     const consultants = assignmentUsers.filter((user) =>
-      ["admin", "consultant"].includes(user.role),
+      ["admin", "consultant", "manager"].includes(user.role),
     );
     if (
       client?.assignedUser?.id &&
@@ -1383,7 +1383,7 @@ export default function ClientProfile() {
               />
             ) : null}
 
-            {["admin", "consultant"].includes(role) && canAccessFinancialData ? (
+            {["admin", "consultant", "manager"].includes(role) && canAccessFinancialData ? (
               <QuickBooksSyncCard
                 clientId={client.id}
                 qbCustomerId={client.qbCustomerId}

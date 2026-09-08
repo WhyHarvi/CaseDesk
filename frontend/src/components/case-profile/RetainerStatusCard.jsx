@@ -293,7 +293,7 @@ export default function RetainerStatusCard({ caseItem, onOpenAgreementsTab, onSt
   const [resetOpen, setResetOpen] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState("");
-  const canApprove = ["admin", "consultant"].includes(role);
+  const canApprove = ["admin", "consultant", "manager"].includes(role);
 
   async function load() {
     setError("");

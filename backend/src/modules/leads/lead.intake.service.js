@@ -19,7 +19,7 @@ function page(query = {}) {
 async function validateFormReferences(agencyId, values, db = prisma) {
   const [source, owner, campaign] = await Promise.all([
     db.leadSource.findFirst({ where: { id: values.sourceId, agencyId, isActive: true }, select: { id: true } }),
-    db.user.findFirst({ where: { id: values.ownerUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } } }, select: { id: true } }),
+    db.user.findFirst({ where: { id: values.ownerUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk", "manager"] } } } }, select: { id: true } }),
     values.campaignId ? db.leadCampaign.findFirst({ where: { id: values.campaignId, agencyId, sourceId: values.sourceId, isActive: true }, select: { id: true } }) : Promise.resolve(null),
   ]);
   if (!source) throw createHttpError(400, "Select an active lead source.", "INVALID_LEAD_SOURCE");

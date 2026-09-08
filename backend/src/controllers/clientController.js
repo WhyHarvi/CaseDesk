@@ -1380,7 +1380,7 @@ async function validateAssignedUser(req) {
       memberships: {
         some: {
           agencyId: req.auth.agencyId,
-          role: { in: ["admin", "consultant", "frontdesk"] },
+          role: { in: ["admin", "consultant", "frontdesk", "manager"] },
           isActive: true,
         },
       },

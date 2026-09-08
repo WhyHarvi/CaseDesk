@@ -114,20 +114,20 @@ router.get(
   asyncHandler(getPaymentSummaries),
 );
 router.post("/", asyncHandler(createCaseWithRequiredCollaboration));
-router.get("/access-requests/review", requireRole("admin", "consultant"), asyncHandler(listReviewableCaseAccessRequests));
+router.get("/access-requests/review", requireRole("admin", "consultant", "manager"), asyncHandler(listReviewableCaseAccessRequests));
 router.get("/:id/access-preview", requireRole("consultant", "frontdesk"), asyncHandler(restrictedCasePreview));
 router.post("/:id/access-requests", requireRole("consultant", "frontdesk"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(requestCaseAccess));
 router.delete("/:id/access-requests/:requestId", requireRole("consultant", "frontdesk"), asyncHandler(withdrawCaseAccessRequest));
 router.use("/:id", requireCaseAccess());
-router.get("/:id/client-portal-policy", requireRole("admin", "consultant"), asyncHandler(getCasePortalPolicy));
-router.put("/:id/client-portal-policy", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(putCasePortalPolicy));
-router.delete("/:id/client-portal-policy", requireRole("admin", "consultant"), asyncHandler(resetCasePortalPolicy));
-router.post("/:id/access-requests/:requestId/approve", requireRole("admin", "consultant"), asyncHandler(approveCaseAccessRequest));
-router.post("/:id/access-requests/:requestId/decline", requireRole("admin", "consultant"), asyncHandler(declineCaseAccessRequest));
+router.get("/:id/client-portal-policy", requireRole("admin", "consultant", "manager"), asyncHandler(getCasePortalPolicy));
+router.put("/:id/client-portal-policy", requireRole("admin", "consultant", "manager"), rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(putCasePortalPolicy));
+router.delete("/:id/client-portal-policy", requireRole("admin", "consultant", "manager"), asyncHandler(resetCasePortalPolicy));
+router.post("/:id/access-requests/:requestId/approve", requireRole("admin", "consultant", "manager"), asyncHandler(approveCaseAccessRequest));
+router.post("/:id/access-requests/:requestId/decline", requireRole("admin", "consultant", "manager"), asyncHandler(declineCaseAccessRequest));
 router.get("/:id/lifecycle", asyncHandler(getCaseLifecycle));
 router.patch(
   "/:id/lifecycle",
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   asyncHandler(requireCompleteCaseTeam),
   asyncHandler(updateCaseLifecycle),
 );
@@ -154,36 +154,36 @@ router.get(
 router.patch(
   "/:id/information-sections/:sectionKey",
   requirePortalCaseTab("profile"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 60 }),
   asyncHandler(patchCaseInformationSection),
 );
 router.put(
   "/:id/information-sections/:sectionKey/state",
   requirePortalCaseTab("profile"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 60 }),
   asyncHandler(putCaseInformationSectionState),
 );
 router.post(
   "/:id/questionnaire-assignments/:assignmentId/review",
   requirePortalCaseTab("questionnaires"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 30 }),
   asyncHandler(reviewQuestionnaireAssignment),
 );
 router.get("/:id/applicants", asyncHandler(listCaseApplicants));
-router.post("/:id/applicants", requireRole("admin", "consultant"), asyncHandler(createCaseApplicant));
-router.patch("/:id/applicants/:applicantId", requireRole("admin", "consultant"), asyncHandler(updateCaseApplicant));
+router.post("/:id/applicants", requireRole("admin", "consultant", "manager"), asyncHandler(createCaseApplicant));
+router.patch("/:id/applicants/:applicantId", requireRole("admin", "consultant", "manager"), asyncHandler(updateCaseApplicant));
 router.delete(
   "/:id/applicants/:applicantId",
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   asyncHandler(removeCaseApplicant),
 );
 router.patch(
   "/:id/assessment",
   requirePortalCaseTab("profile"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   asyncHandler(saveCaseAssessment),
 );
 router.get("/:id/workflow", asyncHandler(getCaseWorkflow));
@@ -210,27 +210,27 @@ router.patch(
 );
 router.post(
   "/:id/workflow/apply-template",
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   asyncHandler(applyCaseWorkflowTemplate),
 );
-router.patch("/:id/workflow", requireRole("admin", "consultant"), asyncHandler(saveCaseWorkflow));
-router.patch("/:id/workflow/:stepId", requireRole("admin", "consultant"), asyncHandler(updateCaseWorkflowStep));
+router.patch("/:id/workflow", requireRole("admin", "consultant", "manager"), asyncHandler(saveCaseWorkflow));
+router.patch("/:id/workflow/:stepId", requireRole("admin", "consultant", "manager"), asyncHandler(updateCaseWorkflowStep));
 router.get("/:id/ledger", asyncHandler(listCaseLedgerEntries));
-router.post("/:id/ledger", requireRole("admin", "consultant"), asyncHandler(createCaseLedgerEntry));
-router.patch("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHandler(updateLedgerEntry));
-router.delete("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHandler(deleteLedgerEntry));
+router.post("/:id/ledger", requireRole("admin", "consultant", "manager"), asyncHandler(createCaseLedgerEntry));
+router.patch("/:id/ledger/:entryId", requireRole("admin", "consultant", "manager"), asyncHandler(updateLedgerEntry));
+router.delete("/:id/ledger/:entryId", requireRole("admin", "consultant", "manager"), asyncHandler(deleteLedgerEntry));
 router.get("/:id", asyncHandler(getCaseById));
-router.patch("/:id", requireRole("admin", "consultant"), asyncHandler(updateCaseWithRequiredCollaboration));
+router.patch("/:id", requireRole("admin", "consultant", "manager"), asyncHandler(updateCaseWithRequiredCollaboration));
 router.patch(
   "/:id/close",
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   asyncHandler(requireCompleteCaseTeam),
   asyncHandler(closeCase),
 );
-router.patch("/:id/archive", requireRole("admin", "consultant"), asyncHandler(archiveCase));
-router.patch("/:id/unarchive", requireRole("admin", "consultant"), asyncHandler(unarchiveCase));
-router.delete("/:id", requireRole("admin", "consultant"), asyncHandler(softDeleteCase));
-router.patch("/:id/restore", requireRole("admin", "consultant"), asyncHandler(restoreCase));
+router.patch("/:id/archive", requireRole("admin", "consultant", "manager"), asyncHandler(archiveCase));
+router.patch("/:id/unarchive", requireRole("admin", "consultant", "manager"), asyncHandler(unarchiveCase));
+router.delete("/:id", requireRole("admin", "consultant", "manager"), asyncHandler(softDeleteCase));
+router.patch("/:id/restore", requireRole("admin", "consultant", "manager"), asyncHandler(restoreCase));
 router.get(
   "/:id/invoices",
   requirePortalCaseTab("billing"),
@@ -241,7 +241,7 @@ router.post(
   "/:id/invoices",
   requirePortalCaseTab("billing"),
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(createInvoice),
 );
@@ -249,7 +249,7 @@ router.post(
   "/:id/invoices/:invoiceId/cash-payment",
   requirePortalCaseTab("billing"),
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(createCashPayment),
 );
@@ -257,7 +257,7 @@ router.post(
   "/:id/invoices/:invoiceId/manual-payment",
   requirePortalCaseTab("billing"),
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(createManualPayment),
 );
@@ -306,7 +306,7 @@ router.post(
   "/:id/payment-schedule",
   requirePortalCaseTab("billing"),
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 10 }),
   asyncHandler(createSchedule),
 );
@@ -314,7 +314,7 @@ router.patch(
   "/:id/payment-schedule",
   requirePortalCaseTab("billing"),
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(updateSchedule),
 );
@@ -322,7 +322,7 @@ router.post(
   "/:id/payment-schedule/installments/:installmentId/retry",
   requirePortalCaseTab("billing"),
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 10 }),
   asyncHandler(retryInstallmentInvoice),
 );

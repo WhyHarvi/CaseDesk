@@ -20,7 +20,7 @@ export function clientAccessWhere(req) {
   const scope = portalDataScope(req, "clients");
   if (req.auth.role === "admin" || scope === "all") return {};
   if (
-    ["consultant", "frontdesk"].includes(req.auth.role) &&
+    ["consultant", "frontdesk", "manager"].includes(req.auth.role) &&
     scope === "assigned"
   ) {
     return {
@@ -55,7 +55,7 @@ export function caseAccessWhere(req) {
   const scope = portalDataScope(req, "cases");
   if (req.auth.role === "admin" || scope === "all") return {};
   if (
-    ["consultant", "frontdesk"].includes(req.auth.role) &&
+    ["consultant", "frontdesk", "manager"].includes(req.auth.role) &&
     scope === "assigned"
   ) {
     return {

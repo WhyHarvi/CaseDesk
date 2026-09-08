@@ -74,6 +74,20 @@ export function AdminRoute({ children }) {
   return children;
 }
 
+// Team-oversight pages (lead performance dashboard/reports, etc.) — open to
+// admin and manager, unlike AdminRoute's account-provisioning/settings
+// pages, which stay admin-only.
+export function ManagementRoute({ children }) {
+  const { loading, isAuthenticated, role, membership } = useAuth();
+  if (loading) return <AuthLoading />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!["admin", "manager"].includes(role))
+    return (
+      <Navigate to={homePathForRole(role, membership?.permissions)} replace />
+    );
+  return children;
+}
+
 export function DeveloperRoute({ children }) {
   const { loading, isAuthenticated, role } = useAuth();
   if (loading) return <AuthLoading />;

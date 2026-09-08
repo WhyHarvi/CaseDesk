@@ -499,16 +499,20 @@ function AdminOverview({ team, error, onSelect }) {
 export default function Incentives() {
   const { role, appUser } = useAuth();
   const isAdmin = role === "admin";
-  const [selected, setSelected] = useState(null); // {userId, fullName} — admin drill-down
+  // Managing incentive plan design stays admin-only, but seeing the whole
+  // team's earnings (instead of just your own) is oversight, same as
+  // workload — a manager gets that view too (see /api/incentives/summary/team).
+  const canViewTeam = role === "admin" || role === "manager";
+  const [selected, setSelected] = useState(null); // {userId, fullName} — team drill-down
   const [team, setTeam] = useState(null);
   const [teamError, setTeamError] = useState("");
 
   const loadTeam = useCallback(() => {
-    if (!isAdmin) return;
+    if (!canViewTeam) return;
     getIncentiveTeamSummary()
       .then(setTeam)
       .catch((reason) => setTeamError(reason.response?.data?.message || "Team incentives could not be loaded."));
-  }, [isAdmin]);
+  }, [canViewTeam]);
 
   useEffect(() => { loadTeam(); }, [loadTeam]);
 
@@ -522,7 +526,7 @@ export default function Incentives() {
               <div className="min-w-0">
                 <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Incentives</h1>
                 <p className="mt-1 max-w-2xl text-sm text-slate-500 sm:text-base">
-                  {isAdmin ? "See what everyone is earning, and what's still in the pipeline." : "What you've earned, and what's still coming."}
+                  {canViewTeam ? "See what everyone is earning, and what's still in the pipeline." : "What you've earned, and what's still coming."}
                 </p>
               </div>
             </div>
@@ -535,7 +539,7 @@ export default function Incentives() {
         </motion.div>
 
         <AnimatePresence mode="wait">
-          {isAdmin ? (
+          {canViewTeam ? (
             selected ? (
               <motion.div key="person" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
                 <PersonView userId={selected.userId} fullName={selected.fullName} onBack={() => setSelected(null)} />

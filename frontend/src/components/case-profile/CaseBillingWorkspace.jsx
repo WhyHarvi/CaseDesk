@@ -357,7 +357,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
         </div>
       ) : null}
 
-      {payable ? <div className="mt-3">{["admin", "consultant"].includes(role) ? <CashPaymentRow invoice={invoice} onPaid={onPaid} /> : <button type="button" onClick={() => onRecordPayment(invoice)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"><Banknote className="h-3.5 w-3.5" /> Record payment</button>}</div> : null}
+      {payable ? <div className="mt-3">{["admin", "consultant", "manager"].includes(role) ? <CashPaymentRow invoice={invoice} onPaid={onPaid} /> : <button type="button" onClick={() => onRecordPayment(invoice)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"><Banknote className="h-3.5 w-3.5" /> Record payment</button>}</div> : null}
       {role === "admin" && Number(invoice.balance) === Number(invoice.amount) && !["Void", "Voided"].includes(invoice.status) ? (
         <div className="mt-3 border-t border-slate-100 pt-3">
           {!voidOpen ? (
@@ -512,7 +512,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
   const [sheetOpen, setSheetOpen] = useState(false);
   const [cashSheetOpen, setCashSheetOpen] = useState(false);
   const [paymentInvoiceId, setPaymentInvoiceId] = useState("");
-  const canManage = ["admin", "consultant"].includes(role);
+  const canManage = ["admin", "consultant", "manager"].includes(role);
   const canRefund = ["admin", "accountant"].includes(role);
   const canRecordCash = ["admin", "consultant", "frontdesk"].includes(role);
 

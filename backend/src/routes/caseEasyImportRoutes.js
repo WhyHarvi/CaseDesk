@@ -28,7 +28,7 @@ const router = Router();
 
 // Case Easy migration is an explicit staff workspace. Every request remains
 // tenant-scoped in the controller and database policies.
-router.use(requireRole("admin", "consultant", "frontdesk"));
+router.use(requireRole("admin", "consultant", "frontdesk", "manager"));
 
 const uploadLimiter = rateLimit({ windowMs: 60_000, max: 10 });
 

@@ -50,7 +50,7 @@ async function checkAgencyZeroActivity(agencyId, { db, now, windowStart, windowD
     where: {
       agencyId,
       isActive: true,
-      role: { in: ["admin", "consultant", "frontdesk"] },
+      role: { in: ["admin", "consultant", "frontdesk", "manager"] },
       user: { status: "active" },
       // A brand-new hire hasn't had the chance to be inactive yet — only
       // flag people whose membership predates the whole check window.

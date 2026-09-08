@@ -7,7 +7,7 @@ import { Avatar, DailyBars, colorForId, presenceFromLastActive } from "./workloa
 import api from "../../services/api";
 
 const spring = { type: "spring", stiffness: 320, damping: 30 };
-const ROLE_LABEL = { admin: "Admin", consultant: "Consultant", frontdesk: "Front Desk" };
+const ROLE_LABEL = { admin: "Admin", consultant: "Consultant", frontdesk: "Front Desk", manager: "Manager" };
 
 const DAILY_METRICS = [
   ["activeSeconds", "Active time"],

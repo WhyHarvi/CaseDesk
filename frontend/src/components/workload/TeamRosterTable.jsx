@@ -7,11 +7,12 @@ import { Avatar, presenceFromLastActive, useAnimatedWidth } from "./workloadVisu
 const spring = { type: "spring", stiffness: 320, damping: 30 };
 const filterControl = "rounded-2xl border border-slate-200/80 bg-white/80 px-3.5 py-2.5 text-sm font-medium text-slate-700 shadow-sm outline-none backdrop-blur transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100";
 
-const ROLE_LABEL = { admin: "Admin", consultant: "Consultant", frontdesk: "Front Desk" };
+const ROLE_LABEL = { admin: "Admin", consultant: "Consultant", frontdesk: "Front Desk", manager: "Manager" };
 const ROLE_TONE = {
   admin: "bg-violet-50 text-violet-700 ring-violet-100",
   consultant: "bg-sky-50 text-sky-700 ring-sky-100",
   frontdesk: "bg-amber-50 text-amber-700 ring-amber-100",
+  manager: "bg-rose-50 text-rose-700 ring-rose-100",
 };
 
 function RoleBadge({ role }) {

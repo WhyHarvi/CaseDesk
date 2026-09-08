@@ -452,7 +452,7 @@ function activeRole(user, agencyId) {
         // Unassigned. They get their own roster slot in resolveWorkOwner()/
         // route() like admins and consultants, just tagged source:
         // "front_desk" and with no case capacity.
-        ["admin", "consultant", "frontdesk"].includes(membership.role),
+        ["admin", "consultant", "frontdesk", "manager"].includes(membership.role),
     )?.role || null
   );
 }
@@ -744,7 +744,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
         where: {
           agencyId,
           isActive: true,
-          role: { in: ["admin", "consultant", "frontdesk"] },
+          role: { in: ["admin", "consultant", "frontdesk", "manager"] },
           user: { status: "active" },
         },
         select: {

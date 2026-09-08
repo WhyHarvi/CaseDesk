@@ -7,7 +7,7 @@ import { refreshOpenInvoiceSnapshots } from "./incentiveCreditingService.js";
 // Administrators can hold case roles in Team Members just like consultants
 // and front-desk staff, so they must remain eligible everywhere those role
 // assignments are consumed (new-case selectors, collaboration, and access).
-const STAFF_ROLES = ["admin", "consultant", "frontdesk"];
+const STAFF_ROLES = ["admin", "consultant", "frontdesk", "manager"];
 export const CASE_TEAM_ROLE_CODES = { RCIC: "rcic", CASE_WORKER: "case-worker" };
 
 export const collaborationUserSelect = {

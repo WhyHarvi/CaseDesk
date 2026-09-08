@@ -1356,7 +1356,7 @@ export default function Cases() {
   // Frontdesk can now look up and view any case, but editing its stage,
   // creating/removing applicants, and closing/archiving/deleting a case
   // remain admin/consultant only — enforced server-side too (caseRoutes.js).
-  const canManageCases = ["admin", "consultant"].includes(role);
+  const canManageCases = ["admin", "consultant", "manager"].includes(role);
   const [searchParams, setSearchParams] = useSearchParams();
   const [cases, setCases] = useState([]);
   const [clients, setClients] = useState([]);

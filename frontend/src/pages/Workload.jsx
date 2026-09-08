@@ -612,9 +612,14 @@ export default function Workload() {
   const isAdmin = role === "admin";
   // A staff member can be granted the same team-wide view as an admin
   // (Settings > Portal Access > Team workload visibility) without becoming
-  // an admin — reassigning work between teammates stays admin-only below,
-  // this only widens who can see the aggregate view.
+  // an admin or manager — reassigning work between teammates stays
+  // restricted to admin/manager below, this only widens who can see the
+  // aggregate view.
   const canViewTeamWorkload = isAdmin || hasCapability(role, membership?.permissions, "teamWorkload");
+  // Reassigning work between teammates is oversight, not the broader
+  // teamWorkload view capability — matches the backend, which only opens
+  // /admin/consultants/workload/reassign to admin and manager.
+  const canReassignWorkload = isAdmin || role === "manager";
   const [openAppointmentId, setOpenAppointmentId] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -687,7 +692,7 @@ export default function Workload() {
             Loading {canViewTeamWorkload ? "team" : "your"} workload…
           </div>
         ) : null}
-        {data ? (canViewTeamWorkload ? <TeamWorkload data={data} period={period} onPeriodChange={setPeriod} onOpenAppointment={setOpenAppointmentId} onReassign={isAdmin ? reassign : undefined} onWorkloadChanged={() => loadWorkload({ fresh: true })} /> : <PersonalWorkload data={data} onOpenAppointment={setOpenAppointmentId} />) : null}
+        {data ? (canViewTeamWorkload ? <TeamWorkload data={data} period={period} onPeriodChange={setPeriod} onOpenAppointment={setOpenAppointmentId} onReassign={canReassignWorkload ? reassign : undefined} onWorkloadChanged={() => loadWorkload({ fresh: true })} /> : <PersonalWorkload data={data} onOpenAppointment={setOpenAppointmentId} />) : null}
         {openAppointmentId ? (
           <AppointmentProfileOverlay
             appointmentId={openAppointmentId}

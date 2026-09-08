@@ -75,7 +75,7 @@ const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 // Staff roles allowed to bypass an office location's closed-day rule. Past
 // time slots use the narrower canBookPastInternalSlot policy instead.
-const STAFF_ROLES_IGNORING_LOCATION_CLOSURE = new Set(["admin", "consultant", "frontdesk"]);
+const STAFF_ROLES_IGNORING_LOCATION_CLOSURE = new Set(["admin", "consultant", "frontdesk", "manager"]);
 
 export const APPOINTMENT_SUBJECT_MAX_WORDS = 10;
 function appointmentSubjectWordCount(value) {

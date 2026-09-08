@@ -41,6 +41,10 @@ This vault describes the current React, Express, Prisma, and PostgreSQL applicat
 - [[CaseInvoice]] · [[Payment]] · [[CasePaymentSchedule]] · [[Notification]]
 - [[PortalAccessPolicy]] · [[ActivityLog]]
 
+## Decisions
+
+- [[Manager Role Permissions Proposal]]
+
 ## Critical Dependency Chains
 
 1. [[Supabase]] → [[Authentication]] → [[AgencyMember]] → [[Multi-Tenancy]] → every protected feature.

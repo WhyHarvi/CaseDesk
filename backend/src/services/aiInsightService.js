@@ -318,7 +318,7 @@ async function activeTeamUsers(req, db) {
         some: {
           agencyId: req.auth.agencyId,
           isActive: true,
-          role: { in: ["admin", "consultant", "frontdesk"] },
+          role: { in: ["admin", "consultant", "frontdesk", "manager"] },
         },
       },
     },

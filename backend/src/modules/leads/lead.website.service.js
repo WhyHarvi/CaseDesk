@@ -58,7 +58,7 @@ function parseProvider(value) {
 async function validateReferences(agencyId, values) {
   const [source, owner, campaign] = await Promise.all([
     prisma.leadSource.findFirst({ where: { id: values.sourceId, agencyId, isActive: true }, select: { id: true } }),
-    prisma.user.findFirst({ where: { id: values.ownerUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } } }, select: { id: true } }),
+    prisma.user.findFirst({ where: { id: values.ownerUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk", "manager"] } } } }, select: { id: true } }),
     values.campaignId ? prisma.leadCampaign.findFirst({ where: { id: values.campaignId, agencyId, sourceId: values.sourceId, isActive: true }, select: { id: true } }) : Promise.resolve(null),
   ]);
   if (!source) throw createHttpError(400, "Select an active lead source.", "INVALID_LEAD_SOURCE");

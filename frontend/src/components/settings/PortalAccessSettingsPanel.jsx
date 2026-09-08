@@ -252,7 +252,8 @@ function StaffPortalAccessSettingsPanel() {
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
               Choose exactly which workspace areas, case tabs, and client
-              information each consultant or front-desk member can access.
+              information each consultant, front-desk, or manager team
+              member can access.
             </p>
           </div>
         </div>
@@ -292,11 +293,12 @@ function StaffPortalAccessSettingsPanel() {
               />
             </div>
           </Field>
-          <div className="mt-3 grid grid-cols-3 rounded-2xl bg-muted p-1">
+          <div className="mt-3 grid grid-cols-4 rounded-2xl bg-muted p-1">
             {[
               ["all", "All"],
               ["consultant", "Consultants"],
               ["frontdesk", "Front desk"],
+              ["manager", "Managers"],
             ].map(([id, label]) => (
               <button
                 key={id}

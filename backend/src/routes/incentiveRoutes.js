@@ -8,7 +8,7 @@ const router = Router();
 
 router.get("/ledger", asyncHandler(getLedger));
 router.get("/summary", asyncHandler(getSummary));
-router.get("/summary/team", requireRole("admin"), asyncHandler(getTeamSummary));
+router.get("/summary/team", requireRole("admin", "manager"), asyncHandler(getTeamSummary));
 router.get("/pipeline", asyncHandler(getPipeline));
 router.get("/timelines", asyncHandler(getActiveTimelines));
 router.get("/breakdown", asyncHandler(getBreakdown));

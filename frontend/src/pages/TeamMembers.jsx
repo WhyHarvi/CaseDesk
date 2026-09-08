@@ -10,6 +10,7 @@ import StaffAvatar from "../components/staff/StaffAvatar";
 const ROLE_OPTIONS = [
   { value: "consultant", label: "Consultant" },
   { value: "frontdesk", label: "Front Desk" },
+  { value: "manager", label: "Manager" },
 ];
 
 const ROLE_FILTERS = [
@@ -17,18 +18,21 @@ const ROLE_FILTERS = [
   { value: "admin", label: "Admins" },
   { value: "consultant", label: "Consultants" },
   { value: "frontdesk", label: "Front Desk" },
+  { value: "manager", label: "Managers" },
 ];
 
 const roleBadge = {
   admin: "bg-amber-50 text-amber-700",
   consultant: "bg-sky-50 text-sky-700",
   frontdesk: "bg-violet-50 text-violet-700",
+  manager: "bg-rose-50 text-rose-700",
 };
 
 const roleLabel = {
   admin: "Admin",
   consultant: "Consultant",
   frontdesk: "Front Desk",
+  manager: "Manager",
 };
 
 const statusBadge = {
@@ -46,12 +50,12 @@ const knownErrors = {
   AUTH_INVITATION_FAILED: "The invitation could not be sent right now. Please try again shortly.",
   ACCOUNT_EXISTS: "An account with this email already exists.",
   AUTH_ACCOUNT_EXISTS: "An authentication account with this email already exists.",
-  ROLE_CHANGE_NOT_ALLOWED: "Roles cannot be changed after creation. Invite a new account with the desired role instead.",
+  ROLE_CHANGE_NOT_ALLOWED: "Roles cannot be changed from this form. Use the Change role control below instead.",
 };
 
 function apiError(reason, fallback) {
   const code = reason.response?.data?.code;
-  if (code === "ACTIVE_ASSIGNMENTS") return reason.response?.data?.message || "Reassign this member's open work before disabling the account.";
+  if (code === "ACTIVE_ASSIGNMENTS") return reason.response?.data?.message || "Reassign this member's open work before continuing.";
   return knownErrors[code] || reason.response?.data?.message || fallback;
 }
 
@@ -128,7 +132,7 @@ function MemberFormFields({ form, update, creating, incentiveRoles, onToggleInce
   return (
     <>
       <div className="sm:col-span-2">
-        <FormField label="Role" hint={creating ? undefined : "Roles cannot be changed after creation."}>
+        <FormField label="Role" hint={creating ? undefined : "Use the Change role control to move this member to a different role."}>
           <Select className="w-full" value={form.role} onChange={update("role")} disabled={!creating}>
             {ROLE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -156,7 +160,7 @@ function MemberFormFields({ form, update, creating, incentiveRoles, onToggleInce
         <input className={fieldClass} value={form.phone} onChange={update("phone")} autoComplete="tel" />
       </FormField>
       <FormField label="Job title" hint="Optional">
-        <input className={fieldClass} value={form.jobTitle} onChange={update("jobTitle")} placeholder={form.role === "frontdesk" ? "Front Desk Coordinator" : "Immigration Consultant"} />
+        <input className={fieldClass} value={form.jobTitle} onChange={update("jobTitle")} placeholder={form.role === "frontdesk" ? "Front Desk Coordinator" : form.role === "manager" ? "Team Manager" : "Immigration Consultant"} />
       </FormField>
       {form.role === "consultant" ? (
         <>
@@ -260,6 +264,8 @@ function MemberCard({ member, incentiveRoles, onOpen }) {
         </>
       ) : member.role === "frontdesk" ? (
         <p className="mt-2 text-sm text-slate-500">Handles reception, lead intake, and scheduling.</p>
+      ) : member.role === "manager" ? (
+        <p className="mt-2 text-sm text-slate-500">Oversees team workload, cases, leads, and clients agency-wide.</p>
       ) : (
         <p className="mt-2 text-sm text-slate-500">Manages agency settings and administration.</p>
       )}
@@ -290,6 +296,8 @@ export default function TeamMembers() {
   const [editForm, setEditForm] = useState(emptyForm);
   const [modalError, setModalError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [roleChangeTo, setRoleChangeTo] = useState("");
+  const [changingRole, setChangingRole] = useState(false);
 
   // Admins aren't in the manage-account flow above (invite/disable/reset
   // password is deliberately restricted to consultant/frontdesk, and their
@@ -387,6 +395,7 @@ export default function TeamMembers() {
   function openEdit(member) {
     setEditing(member);
     setEditForm(formFromMember(member));
+    setRoleChangeTo(member.role);
     setModalError("");
     setNotice("");
   }
@@ -427,6 +436,22 @@ export default function TeamMembers() {
     }
   }
 
+  async function changeRole() {
+    if (!window.confirm(`Change ${editing.fullName}'s role to ${roleLabel[roleChangeTo] || roleChangeTo}?`)) return;
+    setChangingRole(true);
+    setModalError("");
+    try {
+      const { data } = await api.patch(`/admin/team-members/${editing.id}/role`, { role: roleChangeTo });
+      await load();
+      setEditing(null);
+      setNotice(data.message || `${data.data.fullName}'s role was updated.`);
+    } catch (reason) {
+      setModalError(apiError(reason, "The role could not be changed."));
+    } finally {
+      setChangingRole(false);
+    }
+  }
+
   async function disableMember() {
     if (!window.confirm(`Disable ${editing.fullName}? They will immediately lose access to CaseDesk.`)) return;
     setSaving(true);
@@ -461,7 +486,7 @@ export default function TeamMembers() {
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Team Members</h1>
-        <p className="mt-2 text-slate-500">Invite consultants, front desk, and other team members, and manage their access to your workspace.</p>
+        <p className="mt-2 text-slate-500">Invite consultants, front desk, managers, and other team members, and manage their access to your workspace.</p>
       </div>
       <button onClick={openInvite} className="flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-200 transition hover:-translate-y-0.5 hover:bg-slate-800"><Plus className="h-4 w-4" /> Invite member</button>
     </div>
@@ -543,6 +568,18 @@ export default function TeamMembers() {
             <button type="button" onClick={() => setEditing(null)} className="rounded-2xl px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancel</button>
             <button disabled={saving} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{saving ? "Saving…" : "Save changes"}</button>
           </form>
+          <div className="mt-6 border-t border-slate-100 pt-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Change role</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">Moves this member to a different role and resets their portal access to that role's defaults.</p>
+            <div className="mt-3 flex gap-2">
+              <Select className="flex-1" value={roleChangeTo} onChange={(event) => setRoleChangeTo(event.target.value)} disabled={changingRole}>
+                {ROLE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
+              <button type="button" disabled={changingRole || roleChangeTo === editing.role} onClick={changeRole} className="shrink-0 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{changingRole ? "Changing…" : "Change role"}</button>
+            </div>
+          </div>
           <div className="mt-6 flex flex-col gap-2 border-t border-slate-100 pt-5 sm:flex-row">
             <button type="button" disabled={saving} onClick={resetPassword} className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"><KeyRound className="h-4 w-4" />Send password reset</button>
             {editing.status !== "disabled" ? (

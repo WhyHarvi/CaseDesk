@@ -1,7 +1,7 @@
 const DOMAINS = new Set(["appointments", "leads", "clients", "cases", "documents", "followUps", "payments", "performance"]);
 const METRICS = new Set(["count", "summary", "dates"]);
 const SUBJECT_TYPES = new Set(["self", "workspace", "team_member", "role"]);
-const TEAM_ROLES = new Set(["admin", "consultant", "frontdesk"]);
+const TEAM_ROLES = new Set(["admin", "consultant", "frontdesk", "manager"]);
 const STATUSES = new Set(["active", "open", "pending", "overdue", "completed", "converted", "lost", "nurture", "refunded", "outstanding"]);
 const PERIODS = new Set(["all_time", "today", "current_week", "current_month", "previous_month"]);
 const COMPARISONS = new Set(["none", "previous_period"]);

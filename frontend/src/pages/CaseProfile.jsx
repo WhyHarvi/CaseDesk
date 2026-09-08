@@ -85,7 +85,7 @@ export default function CaseProfile() {
   // Frontdesk can view any case now, but managing applicants and
   // archiving/closing/deleting the case itself stays admin/consultant only
   // (enforced server-side in caseRoutes.js too).
-  const canManageCase = ["admin", "consultant"].includes(role);
+  const canManageCase = ["admin", "consultant", "manager"].includes(role);
   const canAccessIncentives = canAccessPage(role, membership?.permissions, "incentives");
   const [caseItem, setCaseItem] = useState(null);
   const [restrictedCase, setRestrictedCase] = useState(null);

@@ -78,7 +78,7 @@ async function validateReferences(tx, agencyId, values) {
   const userIds = [...new Set([values.ownerUserId, values.nextActionOwnerId])];
   const [users, source, campaign] = await Promise.all([
     tx.user.findMany({
-      where: { id: { in: userIds }, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } } },
+      where: { id: { in: userIds }, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk", "manager"] } } } },
       select: { id: true },
     }),
     tx.leadSource.findFirst({ where: { id: values.originalSourceId, agencyId, isActive: true }, select: { id: true } }),
@@ -352,7 +352,7 @@ export async function listLeadStaff(req) {
     where: {
       agencyId: req.auth.agencyId,
       status: "active",
-      memberships: { some: { agencyId: req.auth.agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } },
+      memberships: { some: { agencyId: req.auth.agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk", "manager"] } } },
     },
     orderBy: { fullName: "asc" },
     // schedulingPreference is included (not filtered on here) — this list
@@ -414,7 +414,7 @@ export async function updateLeadSettings(req) {
 
 export async function requireLeadStaff(tx, agencyId, userId) {
   const user = await tx.user.findFirst({
-    where: { id: userId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } } },
+    where: { id: userId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk", "manager"] } } } },
     select: { id: true, fullName: true },
   });
   if (!user) throw createHttpError(400, "Select an active lead team member.", "INVALID_LEAD_OWNER");

@@ -247,8 +247,8 @@ app.use("/api/client-portal", requireAuth, clientPortalRoutes);
 app.use("/api/notifications", requireAuth, notificationRoutes);
 app.use("/api/admin", requireAuth, adminRoutes);
 app.use("/api/consultants", requireAuth, consultantRoutes);
-const staffUser = requireRole("admin", "consultant", "frontdesk");
-const leadUser = requireRole("admin", "consultant", "frontdesk");
+const staffUser = requireRole("admin", "consultant", "frontdesk", "manager");
+const leadUser = requireRole("admin", "consultant", "frontdesk", "manager");
 app.use("/api/search", requireAuth, leadUser, globalSearchRoutes);
 app.use(
   "/api/dashboard",

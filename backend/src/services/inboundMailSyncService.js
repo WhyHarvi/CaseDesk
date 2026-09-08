@@ -295,7 +295,7 @@ async function ingestMicrosoftSentEmail({
     let ownerId = senderUserId || conversation?.assignedToId || caseItem?.assignedUserId || client.assignedUserId;
     if (!ownerId) {
       ownerId = (await tx.user.findFirst({
-        where: { agencyId, status: "active", role: { in: ["admin", "consultant", "frontdesk"] } },
+        where: { agencyId, status: "active", role: { in: ["admin", "consultant", "frontdesk", "manager"] } },
         orderBy: [{ role: "asc" }, { createdAt: "asc" }],
         select: { id: true },
       }))?.id;

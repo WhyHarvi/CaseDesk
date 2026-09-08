@@ -784,7 +784,7 @@ async function validateRelationships(req, existing = null) {
               some: {
                 agencyId: req.auth.agencyId,
                 isActive: true,
-                role: { in: ["admin", "consultant", "frontdesk"] },
+                role: { in: ["admin", "consultant", "frontdesk", "manager"] },
               },
             },
           },
@@ -899,7 +899,7 @@ export async function listFollowUpOptions(req, res) {
           some: {
             agencyId: req.auth.agencyId,
             isActive: true,
-            role: { in: ["admin", "consultant", "frontdesk"] },
+            role: { in: ["admin", "consultant", "frontdesk", "manager"] },
           },
         },
       },

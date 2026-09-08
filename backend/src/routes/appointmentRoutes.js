@@ -15,11 +15,11 @@ import {
 const router = Router();
 router.get("/case/:caseId", asyncHandler(listCaseAppointments));
 router.get("/:id/profile", asyncHandler(getAppointmentProfile));
-router.patch("/:id/profile", requireRole("admin", "consultant", "frontdesk"), asyncHandler(updateAppointmentProfileContext));
-router.post("/:id/notes", requireRole("admin", "consultant"), asyncHandler(createAppointmentNote));
-router.post("/:id/follow-ups", requireRole("admin", "consultant"), asyncHandler(createAppointmentFollowUp));
-router.post("/:id/advice/draft", requireRole("admin", "consultant"), asyncHandler(saveAppointmentAdviceDraftController));
-router.post("/:id/advice/confirm", requireRole("admin", "consultant"), asyncHandler(confirmAppointmentAdviceController));
+router.patch("/:id/profile", requireRole("admin", "consultant", "frontdesk", "manager"), asyncHandler(updateAppointmentProfileContext));
+router.post("/:id/notes", requireRole("admin", "consultant", "manager"), asyncHandler(createAppointmentNote));
+router.post("/:id/follow-ups", requireRole("admin", "consultant", "manager"), asyncHandler(createAppointmentFollowUp));
+router.post("/:id/advice/draft", requireRole("admin", "consultant", "manager"), asyncHandler(saveAppointmentAdviceDraftController));
+router.post("/:id/advice/confirm", requireRole("admin", "consultant", "manager"), asyncHandler(confirmAppointmentAdviceController));
 router.post("/:id/check-in", requireRole("admin", "frontdesk"), asyncHandler(checkInAppointmentClient));
 router.post("/", asyncHandler(createAppointment));
 router.patch("/:id", asyncHandler(updateAppointment));

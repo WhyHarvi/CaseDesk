@@ -51,6 +51,21 @@ export function defaultPortalAccess(role) {
       capabilities: allTrue(portalCapabilityKeys),
     };
   }
+  if (role === "manager") {
+    // Same shape as admin by default — a manager's value is whole-team
+    // visibility and operational reach, short of account provisioning,
+    // billing integrations, and financial finality (those stay gated by
+    // requireRole at the route level regardless of this data). Unlike
+    // admin, this goes through normalizePortalAccess below, so an agency
+    // can still dial one manager's access back via per-user overrides.
+    return {
+      version: 1,
+      pages: allTrue(portalPageKeys),
+      caseTabs: allTrue(portalCaseTabKeys),
+      data: { leads: "all", clients: "all", cases: "all" },
+      capabilities: allTrue(portalCapabilityKeys),
+    };
+  }
   if (role === "frontdesk") {
     return {
       version: 1,
@@ -163,7 +178,7 @@ export function normalizePortalAccess(role, value, legacyPermissions = {}) {
   // Calendar is a shared operational schedule. Every authenticated staff
   // member must be able to see it even if an older per-user portal policy
   // saved calendar:false before workspace-wide visibility was introduced.
-  if (["admin", "consultant", "frontdesk"].includes(role)) normalized.pages.calendar = true;
+  if (["admin", "consultant", "frontdesk", "manager"].includes(role)) normalized.pages.calendar = true;
   if (
     !Object.hasOwn(savedCapabilities, "manageClientPortal") &&
     typeof legacyPermissions.createClientPortal === "boolean"
@@ -185,7 +200,7 @@ export function portalAccessForRequest(req) {
 
 export function hasPortalPageAccess(req, page) {
   if (!portalPageKeys.includes(page)) return false;
-  if (page === "calendar" && ["admin", "consultant", "frontdesk"].includes(req.auth?.role)) return true;
+  if (page === "calendar" && ["admin", "consultant", "frontdesk", "manager"].includes(req.auth?.role)) return true;
   return (
     req.auth?.role === "admin" ||
     portalAccessForRequest(req).pages[page] === true

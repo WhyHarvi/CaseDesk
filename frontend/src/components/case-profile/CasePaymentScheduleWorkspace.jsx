@@ -500,7 +500,7 @@ export default function CasePaymentScheduleWorkspace({ caseItem }) {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
   const [voiding, setVoiding] = useState(false);
-  const canManage = ["admin", "consultant"].includes(role);
+  const canManage = ["admin", "consultant", "manager"].includes(role);
   const isAdmin = role === "admin";
 
   async function load() {

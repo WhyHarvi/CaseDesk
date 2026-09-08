@@ -1763,7 +1763,7 @@ export default function Clients() {
                                 {users
                                   .filter(
                                     (user) =>
-                                      ["admin", "consultant"].includes(user.role) ||
+                                      ["admin", "consultant", "manager"].includes(user.role) ||
                                       user.id === client.assignedUser?.id,
                                   )
                                   .map((user) => (

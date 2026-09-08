@@ -18,7 +18,7 @@ import {
 } from "../controllers/personalMailboxController.js";
 
 const router = Router();
-const teamMember = requireRole("admin", "consultant", "frontdesk");
+const teamMember = requireRole("admin", "consultant", "frontdesk", "manager");
 const admin = requireRole("admin");
 
 router.get("/microsoft/callback", rateLimit({ windowMs: 15 * 60_000, max: 30 }), asyncHandler(personalMailboxCallback));

@@ -23,7 +23,13 @@ import { defaultAvatarPreset, normalizeAvatarPreset, resolvedAvatarPreset } from
 import { AVATAR_BUCKET, removeStorageFile } from "../services/supabaseStorage.js";
 import { clearAuthContextCache } from "../middleware/authMiddleware.js";
 
-const managedRoles = new Set(["consultant", "frontdesk"]);
+const managedRoles = new Set(["consultant", "frontdesk", "manager"]);
+
+function defaultJobTitle(role) {
+  if (role === "frontdesk") return "Front Desk";
+  if (role === "manager") return "Manager";
+  return "Consultant";
+}
 const teamMemberSelect = {
   id: true,
   fullName: true,
@@ -92,7 +98,7 @@ function memberPayload(body, { creating = false } = {}) {
   if (!managedRoles.has(role))
     throw createHttpError(
       400,
-      "Role must be consultant or frontdesk.",
+      "Role must be consultant, frontdesk, or manager.",
       "INVALID_TEAM_MEMBER_ROLE",
     );
   const maximumActiveCases = Number(body.maximumActiveCases ?? 20);
@@ -119,9 +125,7 @@ function memberPayload(body, { creating = false } = {}) {
       ? { email: requiredText(body.email, "Email").toLowerCase() }
       : {}),
     phone: optionalText(body.phone, 40),
-    jobTitle:
-      optionalText(body.jobTitle, 120) ||
-      (role === "frontdesk" ? "Front Desk" : "Consultant"),
+    jobTitle: optionalText(body.jobTitle, 120) || defaultJobTitle(role),
     licenseNumber: role === "consultant" ? optionalText(body.licenseNumber, 80) : null,
     representativeType: role === "consultant" ? optionalText(body.representativeType, 80) : null,
     membershipBody: role === "consultant" ? optionalText(body.membershipBody, 160) : null,
@@ -664,6 +668,123 @@ export async function updateTeamMember(req, res) {
   res.json({ success: true, data });
 }
 
+// The dedicated role-transition workflow updateTeamMember's own role guard
+// points to: moving an existing consultant/frontdesk/manager between those
+// three roles. Promoting someone straight to admin (or demoting an admin)
+// is deliberately out of scope here — that's a tenant ownership change, not
+// a team-role change, and isn't exposed anywhere in this endpoint.
+export async function changeTeamMemberRole(req, res) {
+  const existing = await teamMemberRecord(req);
+  const nextRole = String(req.body?.role || "").trim().toLowerCase();
+  if (!managedRoles.has(nextRole))
+    throw createHttpError(
+      400,
+      "Role must be consultant, frontdesk, or manager.",
+      "INVALID_TEAM_MEMBER_ROLE",
+    );
+  if (nextRole === existing.role)
+    throw createHttpError(
+      409,
+      `${existing.fullName} already has this role.`,
+      "ROLE_UNCHANGED",
+    );
+
+  // A role change can't silently orphan active work — same rule
+  // disableTeamMember already applies when taking someone offline entirely.
+  if (["consultant", "manager"].includes(existing.role)) {
+    const openCaseAssignments = await prisma.case.count({
+      where: {
+        agencyId: req.auth.agencyId,
+        status: { notIn: ["Completed", "Closed", "Cancelled", "Inactive"] },
+        OR: [
+          { assignedUserId: existing.id },
+          {
+            assignments: {
+              some: { consultantUserId: existing.id, status: "active" },
+            },
+          },
+        ],
+      },
+    });
+    if (openCaseAssignments)
+      throw createHttpError(
+        409,
+        `Reassign ${openCaseAssignments} open case(s) before changing this team member's role.`,
+        "ACTIVE_ASSIGNMENTS",
+      );
+  }
+
+  const membership = await prisma.agencyMember.findUnique({
+    where: {
+      agencyId_userId: { agencyId: req.auth.agencyId, userId: existing.id },
+    },
+    select: { id: true },
+  });
+  if (!membership) throw createHttpError(404, "Team member not found.", "NOT_FOUND");
+
+  // Fresh defaults for the new role — a saved portal-access override tuned
+  // for "consultant" (or vice versa) shouldn't silently carry over onto a
+  // different role it was never configured for.
+  const permissions = defaultPermissions(nextRole);
+
+  const data = await prisma.$transaction(async (tx) => {
+    if (nextRole !== "consultant") {
+      await tx.consultantProfile.deleteMany({
+        where: { agencyId: req.auth.agencyId, userId: existing.id },
+      });
+    }
+    await tx.agencyMember.update({
+      where: { id: membership.id },
+      data: { role: nextRole, permissions },
+    });
+    return tx.user.update({
+      where: { id: existing.id },
+      data: {
+        role: nextRole,
+        jobTitle: defaultJobTitle(nextRole),
+        ...(nextRole !== "consultant"
+          ? {
+              licenseNumber: null,
+              representativeType: null,
+              membershipBody: null,
+              membershipProvince: null,
+            }
+          : {}),
+      },
+      select: teamMemberSelect,
+    });
+  });
+
+  if (existing.authUserId) clearAuthContextCache(existing.authUserId);
+  await reconcileNotificationAccessForUser({
+    agencyId: req.auth.agencyId,
+    userId: existing.id,
+    role: nextRole,
+    permissions,
+    force: true,
+  }).catch((error) => {
+    logger.warn("team_member.notification_access_reconcile_failed", {
+      agencyId: req.auth.agencyId,
+      userId: existing.id,
+      reason: error.message,
+    });
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    action: "TEAM_MEMBER_ROLE_CHANGED",
+    details: `${existing.fullName} role changed from ${existing.role} to ${nextRole}`,
+    entityType: "user",
+    entityId: existing.id,
+    metadata: { targetUserId: existing.id, fromRole: existing.role, toRole: nextRole },
+  });
+  res.json({
+    success: true,
+    data,
+    message: `${data.fullName} is now ${nextRole === "frontdesk" ? "front desk" : `a ${nextRole}`}.`,
+  });
+}
+
 export async function disableTeamMember(req, res) {
   const existing = await teamMemberRecord(req);
   const [openLeadAssignments, openCaseAssignments] = await Promise.all([
@@ -674,7 +795,7 @@ export async function disableTeamMember(req, res) {
         OR: [{ ownerUserId: existing.id }, { nextActionOwnerId: existing.id }],
       },
     }),
-    existing.role === "consultant"
+    ["consultant", "manager"].includes(existing.role)
       ? prisma.case.count({
           where: {
             agencyId: req.auth.agencyId,

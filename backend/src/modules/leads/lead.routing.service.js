@@ -74,7 +74,7 @@ export async function resolveRoutedOwner(tx, agencyId, attrs, sourceType) {
   for (const rule of matches) {
     if (!rule.targetUserId) continue;
     const target = await tx.user.findFirst({
-      where: { id: rule.targetUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } } },
+      where: { id: rule.targetUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk", "manager"] } } } },
       select: { id: true },
     });
     if (!target) continue;

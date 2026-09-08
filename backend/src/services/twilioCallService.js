@@ -134,7 +134,7 @@ export async function issueTwilioAccessToken(agencyId, userId) {
 // ---- Voice lines & TwiML Application provisioning --------------------------
 
 const LINE_ROUTINGS = new Set(["FRONTDESK", "STAFF", "INTERNAL", "DIRECT"]);
-const staffRoleWhere = { in: ["admin", "consultant", "frontdesk"] };
+const staffRoleWhere = { in: ["admin", "consultant", "frontdesk", "manager"] };
 const unavailableTwiML = `<Response><Say voice="alice" language="en-US">This business is not available right now. Goodbye.</Say></Response>`;
 
 async function outboundNumbersForUser(agencyId, userId, defaultNumber) {

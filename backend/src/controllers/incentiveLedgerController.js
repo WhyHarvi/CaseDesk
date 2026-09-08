@@ -121,7 +121,7 @@ export async function getTeamSummary(req, res) {
   const [lifetimeByUser, monthByUser, users] = await Promise.all([
     prisma.incentiveLedgerEntry.groupBy({ by: ["userId"], where: { agencyId }, _sum: { creditedAmount: true } }),
     prisma.incentiveLedgerEntry.groupBy({ by: ["userId"], where: { agencyId, creditedAt: { gte: startOfCurrentMonthUtc() } }, _sum: { creditedAmount: true } }),
-    prisma.user.findMany({ where: { agencyId, status: "active", role: { in: ["admin", "consultant", "frontdesk"] } }, select: { id: true, fullName: true, role: true } }),
+    prisma.user.findMany({ where: { agencyId, status: "active", role: { in: ["admin", "consultant", "frontdesk", "manager"] } }, select: { id: true, fullName: true, role: true } }),
   ]);
   const lifetimeByUserId = new Map(lifetimeByUser.map((row) => [row.userId, Number(row._sum.creditedAmount || 0)]));
   const monthByUserId = new Map(monthByUser.map((row) => [row.userId, Number(row._sum.creditedAmount || 0)]));

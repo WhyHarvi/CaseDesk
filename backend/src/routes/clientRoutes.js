@@ -88,13 +88,13 @@ router.get(
 router.get(
   "/:id/billing/manual-entry-options",
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant", "frontdesk"),
+  requireRole("admin", "consultant", "frontdesk", "manager"),
   asyncHandler(getClientManualBillingOptions),
 );
 router.post(
   "/:id/billing/manual-entry",
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant", "frontdesk"),
+  requireRole("admin", "consultant", "frontdesk", "manager"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(createClientManualBillingEntry),
 );
@@ -115,13 +115,13 @@ router.get("/:id", asyncHandler(getClientById));
 // separately (see caseRoutes.js / noteRoutes.js); this guard is
 // client-record-specific.
 router.post("/", asyncHandler(createClient));
-router.patch("/:id", requireRole("admin", "consultant", "frontdesk"), asyncHandler(updateClient));
+router.patch("/:id", requireRole("admin", "consultant", "frontdesk", "manager"), asyncHandler(updateClient));
 router.get("/:id/archive-impact", asyncHandler(getClientArchiveImpact));
-router.patch("/:id/archive", requireRole("admin", "consultant", "frontdesk"), asyncHandler(archiveClient));
-router.patch("/:id/close", requireRole("admin", "consultant", "frontdesk"), asyncHandler(closeClient));
+router.patch("/:id/archive", requireRole("admin", "consultant", "frontdesk", "manager"), asyncHandler(archiveClient));
+router.patch("/:id/close", requireRole("admin", "consultant", "frontdesk", "manager"), asyncHandler(closeClient));
 router.post(
   "/:id/quickbooks-sync",
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "manager"),
   rateLimit({ windowMs: 60_000, max: 10 }),
   asyncHandler(syncClientQuickBooks),
 );

@@ -1015,7 +1015,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             <button type="button" disabled={converting} onClick={linkGuestToClient} className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-sky-300 disabled:opacity-50">
               {converting ? "Saving…" : "Save as client"}
             </button>
-          ) : ["admin", "consultant"].includes(role) ? (
+          ) : ["admin", "consultant", "manager"].includes(role) ? (
             <button type="button" disabled={converting} onClick={openAppointmentNotes} className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50">
               {converting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <NotebookPen className="h-3.5 w-3.5" />} {converting ? "Linking…" : "Appointment notes"}
             </button>

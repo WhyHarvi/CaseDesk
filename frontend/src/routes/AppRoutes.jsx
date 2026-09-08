@@ -5,6 +5,7 @@ import {
   DeveloperRoute,
   HomeRedirect,
   InternalRoute,
+  ManagementRoute,
   PortalAccessRoute,
   PortalRoute,
 } from "../auth/AuthRoutes";
@@ -411,17 +412,17 @@ export default function AppRoutes() {
         <Route
           path="/lead-dashboard"
           element={
-            <AdminRoute>
+            <ManagementRoute>
               <LeadDashboardPage />
-            </AdminRoute>
+            </ManagementRoute>
           }
         />
         <Route
           path="/lead-reports"
           element={
-            <AdminRoute>
+            <ManagementRoute>
               <LeadReportsPage />
-            </AdminRoute>
+            </ManagementRoute>
           }
         />
         <Route

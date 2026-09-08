@@ -26,7 +26,7 @@ export async function getDeveloperOverview(req, res) {
   ] = await Promise.all([
     prisma.agency.count({ where: { slug: { not: "casedesk-developer" } } }),
     prisma.agency.count({ where: { status: "active", accessStatus: "active", slug: { not: "casedesk-developer" } } }),
-    prisma.user.count({ where: { status: "active", role: { in: ["admin", "consultant", "frontdesk"] }, agency: { slug: { not: "casedesk-developer" } } } }),
+    prisma.user.count({ where: { status: "active", role: { in: ["admin", "consultant", "frontdesk", "manager"] }, agency: { slug: { not: "casedesk-developer" } } } }),
     prisma.client.count({ where: { archivedAt: null, agency: { slug: { not: "casedesk-developer" } } } }),
     prisma.case.count({ where: { deletedAt: null, status: { in: ACTIVE_CASE_STATUSES }, agency: { slug: { not: "casedesk-developer" } } } }),
     prisma.lead.count({ where: { status: { in: ["OPEN", "NURTURE"] }, agency: { slug: { not: "casedesk-developer" } } } }),
@@ -60,7 +60,7 @@ export async function listDeveloperAgencies(req, res) {
   });
   const data = await Promise.all(agencies.map(async (agency) => {
     const [staff, clients, activeCases, openLeads] = await Promise.all([
-      prisma.user.count({ where: { agencyId: agency.id, status: "active", role: { in: ["admin", "consultant", "frontdesk"] } } }),
+      prisma.user.count({ where: { agencyId: agency.id, status: "active", role: { in: ["admin", "consultant", "frontdesk", "manager"] } } }),
       prisma.client.count({ where: { agencyId: agency.id, archivedAt: null } }),
       prisma.case.count({ where: { agencyId: agency.id, deletedAt: null, status: { in: ACTIVE_CASE_STATUSES } } }),
       prisma.lead.count({ where: { agencyId: agency.id, status: { in: ["OPEN", "NURTURE"] } } }),
