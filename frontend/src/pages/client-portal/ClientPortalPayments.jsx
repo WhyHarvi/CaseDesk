@@ -18,7 +18,7 @@ const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Governmen
 
 const PAYMENT_METHOD_ROWS = [
   { value: "bankTransfer", label: "Bank transfer", copy: "Continue to secure QuickBooks checkout", icon: Wallet, online: true },
-  { value: "card", label: "Credit card", copy: "Visa, Mastercard, or another supported card", icon: CreditCard, online: true },
+  { value: "card", label: "Credit card", copy: "A credit card surcharge is included before QuickBooks opens", icon: CreditCard, online: true },
   { value: "interac", label: "Interac e-Transfer", copy: "Send to your agency, then share confirmation", icon: Smartphone },
   { value: "debit", label: "Debit card", copy: "Share your receipt or transaction number", icon: CreditCard },
   { value: "other", label: "Other payment method", copy: "Cheque, wire, bank draft, or an arrangement", icon: Landmark },
@@ -131,7 +131,7 @@ function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, 
                 type="button"
                 disabled={submitting}
                 aria-pressed={selected}
-                onClick={() => item.online ? chooseOnline(item.value) : toggleManual(item.value)}
+                onClick={() => item.value === "card" ? toggleManual(item.value) : item.online ? chooseOnline(item.value) : toggleManual(item.value)}
                 className="grid min-h-[76px] w-full grid-cols-[2rem_1fr_auto] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-[#F7F7F8] disabled:cursor-wait disabled:opacity-60 sm:grid-cols-[2.5rem_2.5rem_1fr_auto] sm:px-4"
               >
                 <span className="hidden text-[10px] font-bold tabular-nums text-slate-400 sm:block">{String(index + 1).padStart(2, "0")}</span>
@@ -142,6 +142,22 @@ function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, 
                   {item.online ? <ArrowRight className="hidden h-4 w-4 text-[#002FA7] sm:block" /> : selected ? <Check className="hidden h-4 w-4 text-[#002FA7] sm:block" /> : <ChevronRight className="hidden h-4 w-4 text-slate-400 sm:block" />}
                 </span>
               </button>
+              {selected && item.value === "card" ? (
+                <div className="border-t border-slate-300 bg-[#F7F7F8] p-4 sm:ml-[4.5rem] sm:border-l sm:px-5">
+                  <div className="flex items-start gap-3 border-l-2 border-[#002FA7] pl-3">
+                    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#002FA7]" />
+                    <div>
+                      <p className="text-xs font-semibold text-slate-950">Confirm you will pay by credit card</p>
+                      <p className="mt-1 text-[11px] leading-5 text-slate-600">QuickBooks may also display Debit or Apple Pay. The {formatMoney(total, currency)} total already includes a {formatMoney(total - base, currency)} credit card surcharge, and choosing another method inside QuickBooks will not remove it.</p>
+                      <p className="mt-1 text-[11px] font-medium leading-5 text-slate-700">To pay by debit without this surcharge, choose Debit card below instead.</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-[auto_auto] sm:justify-start">
+                    <button type="button" onClick={() => chooseOnline("card")} disabled={submitting} className="inline-flex min-h-12 items-center justify-center gap-2 bg-[#002FA7] px-5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-wait disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} Continue with credit card · {formatMoney(total, currency)}</button>
+                    <button type="button" onClick={() => toggleManual("debit")} disabled={submitting} className="min-h-12 border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-[#002FA7] hover:text-[#002FA7] disabled:opacity-50">Choose debit instead</button>
+                  </div>
+                </div>
+              ) : null}
               {selected && !item.online ? (
                 <form onSubmit={submitManual} className="border-t border-slate-300 bg-[#F7F7F8] p-4 sm:ml-[4.5rem] sm:border-l sm:px-5">
                   {item.value === "interac" && instructions ? <div className="mb-4 border-l-2 border-[#002FA7] pl-3"><p className="whitespace-pre-wrap text-xs leading-5 text-slate-700">{instructions}</p></div> : null}
@@ -222,6 +238,7 @@ export default function ClientPortalPayments() {
               {Number(invoice.refundedAmount) > 0 ? <p className="mt-3 text-xs font-medium text-slate-700">{formatMoney(invoice.refundedAmount, currency)} refunded</p> : null}
               {invoice.status === "AwaitingPaymentMethod" || changingInvoiceId === invoice.id ? <ChoosePaymentMethod invoice={invoice} surchargeRates={data.surchargeRates} instructions={data.instructions} currency={currency} onChosen={async () => { setChangingInvoiceId(null); await load(); }} onCancel={invoice.status === "AwaitingPaymentMethod" ? null : () => setChangingInvoiceId(null)} /> : null}
               {invoice.paymentSubmission ? <div className="mt-4 border-l-2 border-[#002FA7] bg-[#F7F7F8] px-3 py-3"><p className="flex items-center gap-2 text-xs font-semibold text-slate-950"><CheckCircle2 className="h-4 w-4 text-[#002FA7]" />Payment submitted for confirmation</p><p className="mt-1 text-[11px] leading-5 text-slate-600">Your balance updates after your agency confirms the payment.{invoice.paymentSubmission.reference ? ` Reference: ${invoice.paymentSubmission.reference}` : ""}</p></div> : null}
+              {invoice.payNowUrl && Number(invoice.cardSurchargeAmount) > 0 && changingInvoiceId !== invoice.id ? <div className="mt-4 border border-[#002FA7] bg-[#F7F7F8] px-3 py-3"><p className="flex items-center gap-2 text-xs font-semibold text-slate-950"><CircleAlert className="h-4 w-4 shrink-0 text-[#002FA7]" />Credit card surcharge included</p><p className="mt-1 text-[11px] leading-5 text-slate-600">This balance includes a {formatMoney(invoice.cardSurchargeAmount, currency)} credit card surcharge. QuickBooks may also show Debit or Apple Pay, but selecting them there will not remove this fee. To pay by debit without the surcharge, choose Change payment method before paying.</p></div> : null}
               {invoice.status !== "AwaitingPaymentMethod" && changingInvoiceId !== invoice.id ? <div className="mt-4 grid grid-cols-[1fr_auto] gap-2 sm:flex">{invoice.payNowUrl ? <a href={invoice.payNowUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center justify-center gap-2 bg-[#002FA7] px-4 text-sm font-semibold text-white"><Wallet className="h-4 w-4" />Pay now</a> : null}<InvoiceDownloadButton invoice={invoice} />{invoice.canChangePaymentMethod ? <button type="button" onClick={() => setChangingInvoiceId(invoice.id)} className="col-span-2 inline-flex min-h-12 w-full items-center justify-between border border-slate-300 bg-white px-4 text-left text-sm font-semibold text-slate-800 transition hover:border-[#002FA7] hover:text-[#002FA7] sm:ml-auto sm:min-h-11 sm:w-auto sm:gap-3"><span>Change payment method</span><ArrowRight className="h-4 w-4" /></button> : null}</div> : null}
             </article>
           ))}</div></Frame> : null}

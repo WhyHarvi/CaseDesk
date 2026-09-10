@@ -628,6 +628,9 @@ export async function getPortalPayments(req, res) {
         amount: money(invoice.amount),
         balance: money(invoice.balance),
         baseAmount: money(Number(invoice.subtotalAmount) + Number(invoice.taxAmount) - Number(invoice.discountAmount)),
+        cardSurchargeAmount: money((invoice.lines || [])
+          .filter((line) => line.feeCategory === "card-surcharge")
+          .reduce((sum, line) => sum + Number(line.lineTotal), 0)),
         status: invoice.status,
         refundedAmount: money((invoice.refunds || []).filter((refund) => refund.status === "Completed").reduce((sum, refund) => sum + Number(refund.amount), 0)),
         dueDate: invoice.dueDate,

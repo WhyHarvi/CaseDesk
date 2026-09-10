@@ -71,6 +71,12 @@ test("a client can change the method on the same fully-unpaid QuickBooks invoice
   assert.match(portal, /Number\(invoice\.baseAmount \?\? invoice\.balance\)/);
   assert.doesNotMatch(portal, /const base = Number\(invoice\.balance\)/);
   assert.match(portal, /Choosing another method replaces the current processing fee/);
+  assert.match(portalController, /cardSurchargeAmount: money\(\(invoice\.lines \|\| \[\]\)/);
+  assert.match(portal, /Confirm you will pay by credit card/);
+  assert.match(portal, /choosing another method inside QuickBooks will not remove it/);
+  assert.match(portal, /Continue with credit card/);
+  assert.match(portal, /Choose debit instead/);
+  assert.match(portal, /Credit card surcharge included/);
 });
 
 test("configured processing rates stay visible and missing QuickBooks fee items are provisioned", async () => {
