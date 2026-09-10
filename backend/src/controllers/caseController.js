@@ -18,6 +18,7 @@ import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import { notifyCaseAssignment } from "../services/caseAssignmentNotificationService.js";
 import { formatStudyIntakeMonth, isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake, studyIntakeKey } from "../utils/studyIntake.js";
 import { creditStudyPermitMilestone, recordPendingStudyPermitMilestoneEvent, STUDY_PERMIT_MILESTONES } from "../services/incentiveExpansionService.js";
+import { linkLeadSoftProfile } from "../modules/leads/lead.softProfile.service.js";
 
 const include = {
   client: {
@@ -365,6 +366,12 @@ export async function createCase(req, res) {
         creationIdempotencyKey: idempotencyKey,
       },
       include,
+    });
+
+    await linkLeadSoftProfile(tx, {
+      agencyId: req.user.agencyId,
+      clientId: data.client.id,
+      caseId: data.id,
     });
 
     const templateSync = await syncCaseDocumentsFromTemplates(tx, {

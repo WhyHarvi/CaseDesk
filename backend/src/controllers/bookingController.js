@@ -68,6 +68,7 @@ import {
   syncLeadConsultationFromAppointment,
 } from "../services/leadConsultationAppointmentService.js";
 import { createOrLinkLeadForConsultation } from "../modules/leads/lead.booking.js";
+import { linkLeadSoftProfile } from "../modules/leads/lead.softProfile.service.js";
 import { ensureAppointmentCompletionFollowUp, requireAppointmentProfile } from "../services/appointmentProfileService.js";
 import { resolveNotifications } from "../services/notificationService.js";
 
@@ -1777,6 +1778,13 @@ export async function convertAppointmentToClient(req, res) {
       where: { appointmentId: appointment.id, clientId: null },
       data: { clientId: created.id },
     });
+    if (appointment.leadId) {
+      await linkLeadSoftProfile(tx, {
+        agencyId: req.auth.agencyId,
+        leadId: appointment.leadId,
+        clientId: created.id,
+      });
+    }
     await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "CLIENT_LINKED", summary: existing ? "Linked to an existing client" : "Visitor converted to a client", metadata: { clientId: created.id } });
     return { client: created, existing: Boolean(existing) };
   });

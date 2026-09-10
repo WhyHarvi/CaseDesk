@@ -35,6 +35,7 @@ import { isGlobalCaseType, listAgencyCaseTypeOptions } from "../../services/case
 import { canonicalCaseType, normalizeCaseType } from "../../services/workflowService.js";
 import { staleLeadOutreachOverview } from "./lead.staleOutreach.service.js";
 import { ensureAppointmentCompletionFollowUp } from "../../services/appointmentProfileService.js";
+import { logger } from "../../services/logger.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -1456,7 +1457,7 @@ export async function updateCommercialStatus(req, db = prisma) {
   const values = parseCommercialStatus(req.body);
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can update retainer or payment status.", "LEAD_NOT_OPEN");
     const retainerStatus = values.retainerStatus ?? lead.retainerStatus;
@@ -1489,6 +1490,20 @@ export async function updateCommercialStatus(req, db = prisma) {
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.commercial_status_updated", details: `${lead.leadNumber}: ${retainerStatus} / ${initialPaymentStatus}`, entityType: "lead", entityId: lead.id, metadata: { previousRetainerStatus: lead.retainerStatus, retainerStatus, previousInitialPaymentStatus: lead.initialPaymentStatus, initialPaymentStatus } } });
     return updated;
   }, leadTransactionOptions);
+
+  // Payment may have landed before the signed retainer was recorded. Re-run
+  // the evidence projection after the commercial-status transaction commits,
+  // so the now-ready lead can recover its soft links and convert immediately.
+  if (db === prisma && ["SIGNED", "NOT_REQUIRED"].includes(result.retainerStatus)) {
+    try {
+      const { syncLeadInitialPaymentFromEvidence } = await import("./lead.financial.service.js");
+      await syncLeadInitialPaymentFromEvidence(agencyId, { leadId: result.id });
+      return await prisma.lead.findFirst({ where: { id: result.id, agencyId }, include: leadInclude }) || result;
+    } catch (error) {
+      logger.warn("lead.commercial_status_financial_sync_failed", { agencyId, leadId: result.id, reason: error.message });
+    }
+  }
+  return result;
 }
 
 // Unblocks the lead conversion checklist for a retainer that was signed

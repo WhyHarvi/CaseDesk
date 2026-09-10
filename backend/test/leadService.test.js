@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { approveLeadTransferRequest, assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, convertLeadCore, createConsultation, createLead, listLeadSources, qualifyLead, requestLeadTransfer, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
+import { linkLeadSoftProfile } from "../src/modules/leads/lead.softProfile.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
@@ -779,4 +780,65 @@ test("financial evidence auto-converts an early client's lead only once retainer
   const triggerIndex = fnBody.indexOf("if (ready && lead.earlyClientId");
   const pushIndex = fnBody.indexOf("updates.push(updated);");
   assert.ok(pushIndex !== -1 && triggerIndex > pushIndex, "auto-conversion must fire after the payment-status transaction commits, not inside it");
+});
+
+test("financial evidence repairs an appointment-linked soft profile and retries conversion after an earlier paid projection", async () => {
+  const financialService = await source("../src/modules/leads/lead.financial.service.js");
+  const fnStart = financialService.indexOf("export async function syncLeadInitialPaymentFromEvidence(");
+  const fnBody = financialService.slice(fnStart, financialService.indexOf("\nexport ", fnStart + 1));
+
+  assert.match(fnBody, /leadId = null/);
+  assert.match(fnBody, /appointments: \{ some: \{ clientId \} \}/);
+  assert.match(fnBody, /linkLeadSoftProfile\(prisma/);
+  assert.match(fnBody, /const statusChanged = status !== lead\.initialPaymentStatus/);
+  assert.doesNotMatch(fnBody, /if \(status === lead\.initialPaymentStatus\) continue/);
+});
+
+test("soft-profile links require the lead appointment and same-client case ownership", async () => {
+  const softProfileService = await source("../src/modules/leads/lead.softProfile.service.js");
+  const bookingController = await source("../src/controllers/bookingController.js");
+  const caseController = await source("../src/controllers/caseController.js");
+  const leadService = await source("../src/modules/leads/lead.service.js");
+
+  assert.match(softProfileService, /appointments: \{ some: \{ clientId \} \}/);
+  assert.match(softProfileService, /where: \{ id: caseId, agencyId, clientId, deletedAt: null \}/);
+  assert.match(bookingController, /leadId: appointment\.leadId,[\s\S]*clientId: created\.id/);
+  assert.match(caseController, /clientId: data\.client\.id,[\s\S]*caseId: data\.id/);
+  assert.match(leadService, /syncLeadInitialPaymentFromEvidence\(agencyId, \{ leadId: result\.id \}\)/);
+});
+
+test("soft-profile linking fills an appointment lead's client and same-client case together", async () => {
+  const writes = [];
+  const db = {
+    lead: {
+      findMany: async () => [{ id: "lead-1", earlyClientId: null, earlyCaseId: null, appointments: [{ id: "appointment-1" }] }],
+      findFirst: async () => null,
+      update: async ({ data }) => { writes.push(data); return { id: "lead-1", ...data }; },
+    },
+    case: { findFirst: async ({ where }) => where.clientId === "client-1" ? { id: "case-1" } : null },
+  };
+
+  await linkLeadSoftProfile(db, { agencyId: "agency-1", leadId: "lead-1", clientId: "client-1", caseId: "case-1" });
+
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].earlyClientId, "client-1");
+  assert.equal(writes[0].earlyCaseId, "case-1");
+});
+
+test("soft-profile linking refuses an ambiguous client-to-lead relationship", async () => {
+  let updated = false;
+  const db = {
+    lead: {
+      findMany: async () => [
+        { id: "lead-1", earlyClientId: null, earlyCaseId: null, appointments: [{ id: "appointment-1" }] },
+        { id: "lead-2", earlyClientId: null, earlyCaseId: null, appointments: [{ id: "appointment-2" }] },
+      ],
+      update: async () => { updated = true; },
+    },
+  };
+
+  const result = await linkLeadSoftProfile(db, { agencyId: "agency-1", clientId: "client-1", caseId: "case-1" });
+
+  assert.equal(result, null);
+  assert.equal(updated, false);
 });
