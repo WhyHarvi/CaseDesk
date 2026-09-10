@@ -44,6 +44,20 @@ const leadInclude = {
   campaign: { select: { id: true, name: true } },
 };
 
+// Same as leadInclude, plus just enough to show the most recent internal
+// note on the leads overview table without pulling the whole activity feed
+// per row (notes are LeadActivity rows titled "Lead note" — see saveNote in
+// LeadDetailSheet.jsx — there's no separate note model).
+const leadListInclude = {
+  ...leadInclude,
+  activities: {
+    where: { title: "Lead note" },
+    orderBy: { createdAt: "desc" },
+    take: 1,
+    select: { description: true },
+  },
+};
+
 export function visibleLeadActivities(activities = []) {
   const hasReconciledFollowUp = activities.some((activity) => activity.title === "Follow-up (reconciled)");
   const hasReconciledAdmissions = activities.some((activity) => activity.title === "Admissions detail (reconciled)");
@@ -224,7 +238,7 @@ export async function listLeads(req) {
     ...(lostThisWeek ? { lostAt: { gte: bounds.weekStart, lt: bounds.tomorrowStart } } : {}),
   };
   const [data, total] = await Promise.all([
-    prisma.lead.findMany({ where, include: leadInclude, orderBy: { [sortBy]: sortDirection }, skip: (page - 1) * limit, take: limit }),
+    prisma.lead.findMany({ where, include: leadListInclude, orderBy: { [sortBy]: sortDirection }, skip: (page - 1) * limit, take: limit }),
     prisma.lead.count({ where }),
   ]);
   return { data, meta: { page, limit, total } };
