@@ -1,14 +1,19 @@
 import {
   AlertTriangle,
   Baby,
+  BellRing,
+  CalendarClock,
   ChevronDown,
   CheckCircle2,
+  ClipboardList,
+  FileSignature,
   FileText,
   FolderLock,
   HeartHandshake,
   History,
   IdCard,
   MapPin,
+  MessageCircle,
   Plane,
   Plus,
   RefreshCw,
@@ -17,6 +22,7 @@ import {
   UserPlus,
   UserRound,
   Users,
+  WalletCards,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -110,6 +116,23 @@ const workspaceTabDestinations = {
   APPOINTMENTS: "calendar",
   COMMUNICATION: "cases",
   BILLING: "payments",
+};
+
+// A distinct color + icon per tab so the bar reads at a glance instead of
+// as a row of same-looking text labels — full Tailwind class strings
+// (not built from a color-name variable) since the JIT scanner only picks
+// up classes it can see written out literally in the source.
+const workspaceTabVisuals = {
+  PROFILE: { icon: UserRound, active: "text-sky-700", bar: "bg-sky-500", idle: "text-sky-300" },
+  REMINDERS: { icon: BellRing, active: "text-amber-700", bar: "bg-amber-500", idle: "text-amber-300" },
+  QUESTIONNAIRES: { icon: ClipboardList, active: "text-violet-700", bar: "bg-violet-500", idle: "text-violet-300" },
+  DOCUMENTS: { icon: FolderLock, active: "text-indigo-700", bar: "bg-indigo-500", idle: "text-indigo-300" },
+  FORMS: { icon: FileText, active: "text-cyan-700", bar: "bg-cyan-500", idle: "text-cyan-300" },
+  TASKS: { icon: CheckCircle2, active: "text-emerald-700", bar: "bg-emerald-500", idle: "text-emerald-300" },
+  "AGREEMENTS & LETTERS": { icon: FileSignature, active: "text-fuchsia-700", bar: "bg-fuchsia-500", idle: "text-fuchsia-300" },
+  APPOINTMENTS: { icon: CalendarClock, active: "text-orange-700", bar: "bg-orange-500", idle: "text-orange-300" },
+  COMMUNICATION: { icon: MessageCircle, active: "text-teal-700", bar: "bg-teal-500", idle: "text-teal-300" },
+  BILLING: { icon: WalletCards, active: "text-rose-700", bar: "bg-rose-500", idle: "text-rose-300" },
 };
 
 const workspaceTabFromSlug = (slug, availableTabs = caseWorkspaceTabs) =>
@@ -3898,29 +3921,34 @@ export default function CaseWorkspaceTabs({
           {visibleCaseWorkspaceTabs.map((tab) => {
             const isActive = activeTab === tab;
             const badge = caseTabCounts[workspaceTabAccessKeys[tab]];
+            const visuals = workspaceTabVisuals[tab];
+            const TabIcon = visuals?.icon;
 
             return (
               <button
                 key={tab}
                 type="button"
                 onClick={() => selectWorkspaceTab(tab)}
-                className={`relative min-w-max rounded-t-[1rem] px-4 py-2.5 text-[11px] font-semibold tracking-[0.08em] transition ${
+                className={`relative flex min-w-max items-center gap-1.5 rounded-t-[1rem] px-4 py-2.5 text-[11px] font-semibold tracking-[0.08em] transition ${
                   isActive
-                    ? "bg-white text-slate-950 shadow-[0_-1px_0_rgba(255,255,255,0.9),0_10px_28px_rgba(15,23,42,0.08)]"
+                    ? `bg-white ${visuals?.active || "text-slate-950"} shadow-[0_-1px_0_rgba(255,255,255,0.9),0_10px_28px_rgba(15,23,42,0.08)]`
                     : "text-slate-500 hover:bg-white/50 hover:text-slate-800"
                 }`}
               >
+                {TabIcon ? (
+                  <TabIcon className={`h-3.5 w-3.5 shrink-0 ${isActive ? visuals.active : visuals.idle}`} />
+                ) : null}
                 {tab}
                 {badge?.total ? (
                   <span
                     title={`${badge.total} ${badge.total === 1 ? "update" : "updates"}${badge.actions ? ` · ${badge.actions} require action` : ""}`}
-                    className={`ml-2 inline-flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ${badge.actions ? "bg-rose-500" : "bg-sky-500"}`}
+                    className={`ml-1 inline-flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ${badge.actions ? "bg-rose-500" : "bg-sky-500"}`}
                   >
                     {badge.total > 99 ? "99+" : badge.total}
                   </span>
                 ) : null}
                 {isActive ? (
-                  <span className="absolute inset-x-0 -bottom-1 h-1 bg-white" />
+                  <span className={`absolute inset-x-0 -bottom-1 h-1 rounded-full ${visuals?.bar || "bg-white"}`} />
                 ) : null}
               </button>
             );
