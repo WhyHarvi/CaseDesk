@@ -12,10 +12,10 @@ import {
 } from "../controllers/caseCollaborationController.js";
 import rateLimit from "../middleware/rateLimit.js";
 const router = Router();
-router.get("/me/profile", requireRole("consultant", "frontdesk"), asyncHandler(getMyProfile));
-router.patch("/me/profile", requireRole("consultant", "frontdesk"), receiveProfileAvatar, asyncHandler(updateMyProfile));
-router.get("/me/avatar", requireRole("consultant", "frontdesk"), asyncHandler(getMyAvatar));
-router.delete("/me/avatar", requireRole("consultant", "frontdesk"), asyncHandler(deleteMyAvatar));
+router.get("/me/profile", requireRole("consultant", "frontdesk", "manager"), asyncHandler(getMyProfile));
+router.patch("/me/profile", requireRole("consultant", "frontdesk", "manager"), receiveProfileAvatar, asyncHandler(updateMyProfile));
+router.get("/me/avatar", requireRole("consultant", "frontdesk", "manager"), asyncHandler(getMyAvatar));
+router.delete("/me/avatar", requireRole("consultant", "frontdesk", "manager"), asyncHandler(deleteMyAvatar));
 router.use(requireRole("consultant"));
 router.get("/me/workload", asyncHandler(myWorkload));
 router.get("/me/open-cases", asyncHandler(listOpenCases));

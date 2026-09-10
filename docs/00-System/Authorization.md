@@ -19,7 +19,7 @@ Frontend guards in `frontend/src/auth/AuthRoutes.jsx` and `frontend/src/auth/por
 
 ## Role Shape
 
-Admins receive all portal access. Consultants default to assigned clients/cases/leads plus broad case tabs; frontdesk defaults to workspace-wide viewing of clients/cases/leads but mutation endpoints remain separately role-gated. Client identities are linked by [[ClientUser]] and limited to portal routes and policy decisions.
+Admins receive all portal access. Managers default to workspace-wide operational visibility and oversight while account provisioning, integrations, and other admin-finality routes remain admin-only. Consultants default to assigned clients/cases/leads plus broad case tabs; frontdesk defaults to workspace-wide viewing of clients/cases/leads but mutation endpoints remain separately role-gated. Consultants, front-desk staff, and managers share tenant-scoped self-profile Settings endpoints without gaining one another's role-specific operational routes. Client identities are linked by [[ClientUser]] and limited to portal routes and policy decisions.
 
 ## Tests
 

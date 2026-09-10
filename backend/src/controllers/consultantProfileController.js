@@ -88,7 +88,7 @@ async function currentUser(req) {
   let user;
   try {
     user = await prisma.user.findFirst({
-      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk"] } },
+      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk", "manager"] } },
       select: profileSelect,
     });
   } catch (error) {
@@ -188,7 +188,7 @@ export async function getMyAvatar(req, res) {
   let user;
   try {
     user = await prisma.user.findFirst({
-      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk"] } },
+      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk", "manager"] } },
       select: { id: true, avatarStorageKey: true, avatarMimeType: true, avatarPreset: true },
     });
   } catch (error) {
