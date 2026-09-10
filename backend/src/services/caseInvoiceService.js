@@ -15,6 +15,7 @@ import {
   getQuickBooksInvoicesByIds,
   isQuickBooksDuplicateDocumentNumberError,
   quickBooksAppUrl,
+  updateQuickBooksInvoice,
   voidQuickBooksInvoice,
 } from "./quickbooksService.js";
 import { generateCaseInvoicePdf } from "./caseInvoicePdfService.js";
@@ -468,9 +469,19 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
     throw createHttpError(400, "Enter a payment reference or attach a payment screenshot.", "PAYMENT_EVIDENCE_REQUIRED");
   }
   const existing = await prisma.caseInvoice.findFirst({
-    where: { id: invoiceId, agencyId, status: "AwaitingPaymentMethod" },
+    where: { id: invoiceId, agencyId, status: { in: ["AwaitingPaymentMethod", "Open", "Overdue"] } },
+    include: {
+      refunds: { where: { status: { in: ["Requested", "AwaitingQuickBooks", "Completed"] } }, select: { id: true } },
+      paymentApprovals: { where: { status: "Approved" }, select: { amount: true } },
+    },
   });
-  if (!existing) throw createHttpError(404, "This invoice is not awaiting a payment method choice.", "NOT_FOUND");
+  if (!existing) throw createHttpError(404, "This invoice is not available for a payment method choice.", "NOT_FOUND");
+  const isChangingMethod = Boolean(existing.qbInvoiceId);
+  const locallyCollected = Math.max(0, Number(existing.amount) - Number(existing.balance))
+    + existing.paymentApprovals.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  if (isChangingMethod && (locallyCollected > 0.01 || existing.lastPaymentAt || existing.refunds.length)) {
+    throw createHttpError(409, "This invoice already has payment activity and its payment method can no longer be changed.", "INVOICE_PAYMENT_METHOD_LOCKED");
+  }
 
   const [agency, clientRecord, quickBooksSettings] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId } }),
@@ -483,11 +494,12 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
   }
 
   const category = await requireFeeCategory(agencyId, existing.paymentType, { requireMapping: true });
+  const baseTotal = money(Number(existing.subtotalAmount) + Number(existing.taxAmount) - Number(existing.discountAmount));
   const { surcharge, allowedOnlineMethods, grandTotal } = await resolveOnlineMethodSurcharge(agencyId, {
     onlineMethod,
     quickBooksSettings,
     clientProvince: clientRecord.province,
-    total: Number(existing.amount),
+    total: baseTotal,
   });
 
   let client = await syncClientToQuickBooks(agencyId, existing.clientId);
@@ -515,32 +527,41 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
   };
 
   let invoice;
-  try {
-    invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
-  } catch (error) {
-    if (isQuickBooksDuplicateDocumentNumberError(error)) {
-      const providerInvoice = await findQuickBooksInvoiceByDocumentNumber(agencyId, existing.invoiceNumber);
-      if (quickBooksInvoiceMatchesDraft(providerInvoice, { customerId: client.qbCustomerId, total: grandTotal, allowedOnlineMethods })) {
-        // The provider create succeeded but the local finalize did not. Adopt
-        // that exact receivable instead of creating a second invoice.
-        invoice = providerInvoice;
-      } else {
-        // A genuinely unrelated QuickBooks invoice owns this number. Rotate
-        // only the still-unfinalized local placeholder and retry once.
-        resolvedInvoiceNumber = newInvoiceNumber(ACCOUNTING_PROVIDERS.QUICKBOOKS);
-        invoice = await createQuickBooksInvoice(agencyId, {
-          ...baseInvoicePayload,
-          invoiceNumber: resolvedInvoiceNumber,
-          customerId: client.qbCustomerId,
-          requestId: `finalize-${existing.id}-${resolvedInvoiceNumber}`,
-        });
-      }
-    } else {
-      if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
-      const resynced = await syncClientToQuickBooks(agencyId, existing.clientId);
-      if (!resynced?.qbCustomerId) throw error;
-      client = resynced;
+  if (isChangingMethod) {
+    invoice = await updateQuickBooksInvoice(agencyId, {
+      ...baseInvoicePayload,
+      id: existing.qbInvoiceId,
+      customerId: client.qbCustomerId,
+      requestId: `change-method-${existing.id}-${existing.qbSyncToken || "latest"}-${onlineMethod}`,
+    });
+  } else {
+    try {
       invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
+    } catch (error) {
+      if (isQuickBooksDuplicateDocumentNumberError(error)) {
+        const providerInvoice = await findQuickBooksInvoiceByDocumentNumber(agencyId, existing.invoiceNumber);
+        if (quickBooksInvoiceMatchesDraft(providerInvoice, { customerId: client.qbCustomerId, total: grandTotal, allowedOnlineMethods })) {
+          // The provider create succeeded but the local finalize did not. Adopt
+          // that exact receivable instead of creating a second invoice.
+          invoice = providerInvoice;
+        } else {
+          // A genuinely unrelated QuickBooks invoice owns this number. Rotate
+          // only the still-unfinalized local placeholder and retry once.
+          resolvedInvoiceNumber = newInvoiceNumber(ACCOUNTING_PROVIDERS.QUICKBOOKS);
+          invoice = await createQuickBooksInvoice(agencyId, {
+            ...baseInvoicePayload,
+            invoiceNumber: resolvedInvoiceNumber,
+            customerId: client.qbCustomerId,
+            requestId: `finalize-${existing.id}-${resolvedInvoiceNumber}`,
+          });
+        }
+      } else {
+        if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
+        const resynced = await syncClientToQuickBooks(agencyId, existing.clientId);
+        if (!resynced?.qbCustomerId) throw error;
+        client = resynced;
+        invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
+      }
     }
   }
 
@@ -554,7 +575,7 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
         taxAmount: money(invoice.totalTax),
         qbInvoiceId: invoice.id,
         qbInvoiceNumber: invoice.docNumber,
-        qbInvoiceLink: invoice.invoiceLink,
+        qbInvoiceLink: invoice.invoiceLink || existing.qbInvoiceLink,
         qbSyncToken: invoice.syncToken,
         amount: invoice.totalAmount,
         balance: invoice.balance,
@@ -568,7 +589,7 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
         clientPaymentSubmittedAt: isManualMethod ? new Date() : null,
         lines: {
           create: [
-            { agencyId, feeCategory: existing.paymentType, description: existing.description, unitAmount: Number(existing.subtotalAmount), discount: Number(existing.discountAmount), taxable, taxRate: Number(existing.taxRatePercent), taxAmount: money(invoice.totalTax), lineTotal: Number(existing.amount) },
+            { agencyId, feeCategory: existing.paymentType, description: existing.description, unitAmount: Number(existing.subtotalAmount), discount: Number(existing.discountAmount), taxable, taxRate: Number(existing.taxRatePercent), taxAmount: money(invoice.totalTax), lineTotal: baseTotal },
             ...(surcharge ? [{ agencyId, feeCategory: surcharge.category.code, description: surcharge.category.name, unitAmount: surcharge.amount, discount: 0, taxable: false, taxRate: 0, taxAmount: 0, lineTotal: surcharge.amount }] : []),
           ],
         },
@@ -588,8 +609,8 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
     userId: actorUserId,
     clientId: client.id,
     caseId: existing.caseId,
-    action: "invoice.payment_method_chosen",
-    details: `${onlineMethod === "card" ? "Credit card" : onlineMethod === "bankTransfer" ? "Bank transfer" : onlineMethod === "interac" ? "Interac e-Transfer" : onlineMethod === "debit" ? "Debit card" : "Other payment method"} selected for invoice ${resolvedInvoiceNumber} — $${Number(invoice.totalAmount).toFixed(2)} total${isManualMethod ? "; client evidence is awaiting staff confirmation" : ""}`,
+    action: isChangingMethod ? "invoice.payment_method_changed" : "invoice.payment_method_chosen",
+    details: `${onlineMethod === "card" ? "Credit card" : onlineMethod === "bankTransfer" ? "Bank transfer" : onlineMethod === "interac" ? "Interac e-Transfer" : onlineMethod === "debit" ? "Debit card" : "Other payment method"} ${isChangingMethod ? "reselected" : "selected"} for invoice ${resolvedInvoiceNumber} — $${Number(invoice.totalAmount).toFixed(2)} total${isManualMethod ? "; client evidence is awaiting staff confirmation" : ""}`,
     entityType: "caseInvoice",
     entityId: existing.id,
   });

@@ -53,7 +53,7 @@ function PaymentSummary({ payment }) {
   );
 }
 
-function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, onChosen }) {
+function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, onChosen, onCancel = null }) {
   const [method, setMethod] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [reference, setReference] = useState("");
@@ -106,7 +106,10 @@ function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, 
   return (
     <div className="mt-5 border border-slate-300 bg-white">
       <div className="border-b border-slate-300 px-4 py-4">
-        <p className="text-base font-semibold tracking-tight text-slate-950">Choose payment method</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-base font-semibold tracking-tight text-slate-950">{onCancel ? "Choose another payment method" : "Choose payment method"}</p>
+          {onCancel ? <button type="button" onClick={onCancel} disabled={submitting} className="min-h-11 shrink-0 border border-slate-300 px-3 text-xs font-semibold text-slate-700 transition hover:border-[#002FA7] hover:text-[#002FA7] disabled:opacity-50">Keep current method</button> : null}
+        </div>
         <p className="mt-1 text-xs leading-5 text-slate-600">Online options open checkout. Interac, debit, and other methods are confirmed after you submit proof.</p>
       </div>
       <div className="divide-y divide-slate-300">
@@ -187,6 +190,7 @@ export default function ClientPortalPayments() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [changingInvoiceId, setChangingInvoiceId] = useState(null);
   const load = useCallback(() => getPortalPayments().then((result) => { setData(result); setError(""); }).catch((reason) => setError(portalErrorMessage(reason, "Your payment details could not be loaded."))).finally(() => setLoading(false)), []);
   useEffect(() => { load(); }, [load]);
   if (loading) return <ClientPortalSkeleton rows={3} />;
@@ -208,9 +212,9 @@ export default function ClientPortalPayments() {
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{INVOICE_TYPE_LABEL[invoice.paymentType] || invoice.paymentType}{invoice.invoiceNumber ? ` · ${invoice.invoiceNumber}` : ""}</p><h3 className="mt-1.5 text-base font-semibold leading-6 text-slate-950">{invoice.description}</h3></div><span className={`shrink-0 border px-2 py-1 text-[10px] font-semibold ${INVOICE_STATUS_TONE[invoice.status] || "border-slate-300 text-slate-600"}`}>{INVOICE_STATUS_LABEL[invoice.status] || invoice.status}</span></div>
               <div className="mt-4 grid grid-cols-2 border-y border-slate-200 sm:grid-cols-3"><div className="py-3 pr-3"><p className="text-[10px] text-slate-500">Amount</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-950">{formatMoney(invoice.amount, currency)}</p></div><div className="border-l border-slate-200 px-3 py-3"><p className="text-[10px] text-slate-500">Balance due</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-[#002FA7]">{formatMoney(invoice.balance, currency)}</p></div><div className="col-span-2 border-t border-slate-200 py-3 sm:col-span-1 sm:border-l sm:border-t-0 sm:pl-3"><p className="text-[10px] text-slate-500">Due date</p><p className="mt-0.5 text-sm font-semibold text-slate-950">{invoice.dueDate ? formatPortalDate(invoice.dueDate) : "Not specified"}</p></div></div>
               {Number(invoice.refundedAmount) > 0 ? <p className="mt-3 text-xs font-medium text-slate-700">{formatMoney(invoice.refundedAmount, currency)} refunded</p> : null}
-              {invoice.status === "AwaitingPaymentMethod" ? <ChoosePaymentMethod invoice={invoice} surchargeRates={data.surchargeRates} instructions={data.instructions} currency={currency} onChosen={load} /> : null}
+              {invoice.status === "AwaitingPaymentMethod" || changingInvoiceId === invoice.id ? <ChoosePaymentMethod invoice={invoice} surchargeRates={data.surchargeRates} instructions={data.instructions} currency={currency} onChosen={async () => { setChangingInvoiceId(null); await load(); }} onCancel={invoice.status === "AwaitingPaymentMethod" ? null : () => setChangingInvoiceId(null)} /> : null}
               {invoice.paymentSubmission ? <div className="mt-4 border-l-2 border-[#002FA7] bg-[#F7F7F8] px-3 py-3"><p className="flex items-center gap-2 text-xs font-semibold text-slate-950"><CheckCircle2 className="h-4 w-4 text-[#002FA7]" />Payment submitted for confirmation</p><p className="mt-1 text-[11px] leading-5 text-slate-600">Your balance updates after your agency confirms the payment.{invoice.paymentSubmission.reference ? ` Reference: ${invoice.paymentSubmission.reference}` : ""}</p></div> : null}
-              {invoice.status !== "AwaitingPaymentMethod" ? <div className="mt-4 flex gap-2">{invoice.payNowUrl ? <a href={invoice.payNowUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 flex-1 items-center justify-center gap-2 bg-[#002FA7] px-4 text-sm font-semibold text-white sm:flex-none"><Wallet className="h-4 w-4" />Pay now</a> : null}<InvoiceDownloadButton invoice={invoice} /></div> : null}
+              {invoice.status !== "AwaitingPaymentMethod" && changingInvoiceId !== invoice.id ? <div className="mt-4 grid grid-cols-[1fr_auto] gap-2 sm:flex">{invoice.payNowUrl ? <a href={invoice.payNowUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center justify-center gap-2 bg-[#002FA7] px-4 text-sm font-semibold text-white"><Wallet className="h-4 w-4" />Pay now</a> : null}<InvoiceDownloadButton invoice={invoice} />{invoice.canChangePaymentMethod ? <button type="button" onClick={() => setChangingInvoiceId(invoice.id)} className="col-span-2 inline-flex min-h-12 w-full items-center justify-between border border-slate-300 bg-white px-4 text-left text-sm font-semibold text-slate-800 transition hover:border-[#002FA7] hover:text-[#002FA7] sm:ml-auto sm:min-h-11 sm:w-auto sm:gap-3"><span>Change payment method</span><ArrowRight className="h-4 w-4" /></button> : null}</div> : null}
             </article>
           ))}</div></Frame> : null}
 

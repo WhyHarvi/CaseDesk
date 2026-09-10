@@ -632,6 +632,12 @@ export async function getPortalPayments(req, res) {
         dueDate: invoice.dueDate,
         createdAt: invoice.createdAt,
         payNowUrl: Number(invoice.balance) > 0 && !invoice.clientPaymentSubmittedAt ? invoice.qbInvoiceLink || null : null,
+        canChangePaymentMethod: invoice.accountingProvider === "QuickBooks"
+          && Boolean(invoice.qbInvoiceId)
+          && ["Open", "Overdue"].includes(invoice.status)
+          && Math.abs(Number(invoice.amount) - Number(invoice.balance)) <= 0.01
+          && !invoice.lastPaymentAt
+          && !(invoice.refunds || []).some((refund) => ["Requested", "AwaitingQuickBooks", "Completed"].includes(refund.status)),
         paymentSubmission: invoice.clientPaymentSubmittedAt && Number(invoice.balance) > 0 && !invoice.lastPaymentAt
           ? {
               method: invoice.clientPaymentMethod,
@@ -784,10 +790,10 @@ export async function downloadPortalInvoicePdf(req, res) {
 export async function choosePortalInvoicePaymentMethod(req, res) {
   const link = await linkedClient(req);
   const invoice = await prisma.caseInvoice.findFirst({
-    where: { id: req.params.invoiceId, agencyId: req.auth.agencyId, clientId: link.clientId, status: "AwaitingPaymentMethod" },
-    select: { id: true },
+    where: { id: req.params.invoiceId, agencyId: req.auth.agencyId, clientId: link.clientId, status: { in: ["AwaitingPaymentMethod", "Open", "Overdue"] } },
+    select: { id: true, clientPaymentProofStorageKey: true },
   });
-  if (!invoice) throw createHttpError(404, "This invoice is not awaiting a payment method choice.", "NOT_FOUND");
+  if (!invoice) throw createHttpError(404, "This invoice is not available for a payment method choice.", "NOT_FOUND");
   const method = String(req.body?.method || "").trim();
   const reference = String(req.body?.reference || "").trim().slice(0, 160) || null;
   const acceptsEvidence = ["interac", "debit", "other"].includes(method);
@@ -809,6 +815,9 @@ export async function choosePortalInvoicePaymentMethod(req, res) {
         proofFilename: String(req.file?.originalname || "").trim().slice(0, 200) || null,
       },
     });
+    if (invoice.clientPaymentProofStorageKey && invoice.clientPaymentProofStorageKey !== proofStorageKey) {
+      await removeDocumentFile(invoice.clientPaymentProofStorageKey).catch(() => {});
+    }
     res.json({ success: true, data });
   } catch (error) {
     if (proofStorageKey) await removeDocumentFile(proofStorageKey).catch(() => {});

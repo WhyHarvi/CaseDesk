@@ -586,6 +586,101 @@ export async function createQuickBooksInvoice(agencyId, {
   }
 }
 
+// Reprices an existing, fully-unpaid invoice when the client changes their
+// payment method. QuickBooks requires the latest SyncToken and a full update
+// to replace invoice lines; starting from the live provider entity preserves
+// unrelated writable fields while CaseDesk replaces only pricing/payment
+// choices. The caller still re-verifies that no payment exists.
+export async function updateQuickBooksInvoice(agencyId, {
+  id,
+  customerId,
+  itemId,
+  description,
+  amount,
+  dueDate,
+  requestId,
+  invoiceNumber,
+  lines,
+  taxableTaxCodeId,
+  expectedTotal,
+  discountAmount = 0,
+  globalTaxCalculation = "TaxExcluded",
+  allowedOnlineMethods = { card: true, bankTransfer: true },
+}) {
+  const currentPayload = await qboRequest(agencyId, { path: `/invoice/${id}` });
+  const current = currentPayload.Invoice;
+  const currentMapped = mapQuickBooksInvoice(current);
+  if (currentMapped.isVoided || Math.abs(currentMapped.totalAmount - currentMapped.balance) > 0.01) {
+    throw createHttpError(409, "This invoice already has payment activity and its payment method can no longer be changed.", "INVOICE_PAYMENT_METHOD_LOCKED");
+  }
+
+  const invoiceLines = Array.isArray(lines) && lines.length
+    ? lines
+    : [{ itemId, description, amount, taxable: false }];
+  const fixedDiscount = Math.max(0, Number(discountAmount) || 0);
+  const needsNonTaxableCode = fixedDiscount > 0 || invoiceLines.some((line) => !(line.taxable && taxableTaxCodeId));
+  const nonTaxableCodeId = needsNonTaxableCode ? await resolveNonTaxableTaxCodeId(agencyId) : null;
+  if (fixedDiscount > 0 && !nonTaxableCodeId) {
+    throw createHttpError(
+      409,
+      "QuickBooks needs an active non-taxable sales-tax code (Out of Scope, Zero-rated, or Exempt) before CaseDesk can apply an after-tax discount. Check the QuickBooks sales-tax setup and retry the invoice.",
+      "QBO_NON_TAXABLE_CODE_REQUIRED",
+    );
+  }
+
+  const writableCurrent = { ...current };
+  for (const readOnlyField of ["MetaData", "TotalAmt", "Balance", "HomeTotalAmt", "InvoiceLink", "domain", "sparse"]) {
+    delete writableCurrent[readOnlyField];
+  }
+  const body = {
+    ...writableCurrent,
+    Id: current.Id,
+    SyncToken: current.SyncToken,
+    CustomerRef: { value: customerId },
+    ...(invoiceNumber ? { DocNumber: invoiceNumber } : {}),
+    ...(dueDate ? { DueDate: dueDate } : {}),
+    GlobalTaxCalculation: globalTaxCalculation,
+    ApplyTaxAfterDiscount: fixedDiscount > 0 ? false : current.ApplyTaxAfterDiscount,
+    AllowOnlineCreditCardPayment: allowedOnlineMethods.card !== false,
+    AllowOnlineACHPayment: allowedOnlineMethods.bankTransfer !== false,
+    Line: buildQuickBooksInvoiceLines({
+      invoiceLines,
+      taxableTaxCodeId,
+      nonTaxableTaxCodeId: nonTaxableCodeId,
+      discountAmount: fixedDiscount,
+    }),
+  };
+  const payload = await qboRequest(agencyId, { method: "POST", path: "/invoice", requestId, body });
+  const updated = mapQuickBooksInvoice(payload.Invoice);
+  if (Number.isFinite(Number(expectedTotal)) && Math.abs(updated.totalAmount - Number(expectedTotal)) > 0.01) {
+    try {
+      await qboRequest(agencyId, {
+        method: "POST",
+        path: "/invoice",
+        body: { ...writableCurrent, SyncToken: updated.syncToken },
+      });
+    } catch (restoreError) {
+      logger.error("quickbooks.invoice_method_change_restore_failed", { agencyId, invoiceId: id, error: restoreError.message });
+    }
+    throw createHttpError(
+      409,
+      `QuickBooks calculated $${updated.totalAmount.toFixed(2)}, but CaseDesk calculated $${Number(expectedTotal).toFixed(2)}. The prior invoice was restored where possible; check QuickBooks before retrying.`,
+      "QBO_INVOICE_TOTAL_MISMATCH",
+    );
+  }
+
+  try {
+    const sendResult = await qboRequest(agencyId, {
+      method: "POST",
+      path: `/invoice/${updated.id}/send?sendTo=${encodeURIComponent(`qbo-link-trigger+${updated.id}@example.com`)}`,
+    });
+    return mapQuickBooksInvoice(sendResult.Invoice);
+  } catch (error) {
+    logger.warn("quickbooks.invoice_link_trigger_failed", { agencyId, invoiceId: updated.id, error: error.message });
+    return updated;
+  }
+}
+
 // Consultation pricing is displayed to the visitor as one final amount —
 // e.g. exactly $100 — and that's what gets invoiced, non-taxable, same as
 // every other CaseDesk-created QuickBooks invoice before tax-code mapping

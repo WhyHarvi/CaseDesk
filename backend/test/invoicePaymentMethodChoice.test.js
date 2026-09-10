@@ -21,7 +21,7 @@ test("staff-created invoices defer the online payment method to the client", asy
   assert.match(service, /status: "AwaitingPaymentMethod"/);
   assert.match(service, /AUTOMATIC_PROCESSING_FEE_KINDS\.has\(category\.kind\)/);
   assert.match(service, /Processing fees are added automatically after the client chooses an online payment method/);
-  assert.match(portalController, /clientId: link\.clientId, status: "AwaitingPaymentMethod"/);
+  assert.match(portalController, /clientId: link\.clientId, status: \{ in: \["AwaitingPaymentMethod", "Open", "Overdue"\] \}/);
   assert.match(portalController, /finalizeAwaitingPaymentMethodInvoice/);
   assert.match(portalController, /clientPaymentSubmittedAt/);
   assert.match(portalController, /proofStorageKey/);
@@ -44,6 +44,29 @@ test("staff-created invoices defer the online payment method to the client", asy
   assert.match(portal, /h-12 w-full/);
   assert.match(portal, /grid-cols-\[2rem_1fr_auto\]/);
   assert.match(portal, /Number\(surchargeRates\?\.cardSurchargeRatePercent \|\| 0\)/);
+});
+
+test("a client can change the method on the same fully-unpaid QuickBooks invoice", async () => {
+  const [quickBooksService, invoiceService, portalController, portal] = await Promise.all([
+    source("../src/services/quickbooksService.js"),
+    source("../src/services/caseInvoiceService.js"),
+    source("../src/controllers/clientPortalController.js"),
+    source("../../frontend/src/pages/client-portal/ClientPortalPayments.jsx"),
+  ]);
+
+  assert.match(quickBooksService, /export async function updateQuickBooksInvoice/);
+  assert.match(quickBooksService, /currentMapped\.totalAmount - currentMapped\.balance/);
+  assert.match(quickBooksService, /Line: buildQuickBooksInvoiceLines/);
+  assert.match(invoiceService, /const baseTotal = money\(Number\(existing\.subtotalAmount\) \+ Number\(existing\.taxAmount\) - Number\(existing\.discountAmount\)\)/);
+  assert.match(invoiceService, /invoice = await updateQuickBooksInvoice/);
+  assert.match(invoiceService, /INVOICE_PAYMENT_METHOD_LOCKED/);
+  assert.match(invoiceService, /action: isChangingMethod \? "invoice\.payment_method_changed"/);
+  assert.match(portalController, /canChangePaymentMethod:/);
+  assert.match(portalController, /Math\.abs\(Number\(invoice\.amount\) - Number\(invoice\.balance\)\) <= 0\.01/);
+  assert.match(portalController, /removeDocumentFile\(invoice\.clientPaymentProofStorageKey\)/);
+  assert.match(portal, /Change payment method/);
+  assert.match(portal, /Keep current method/);
+  assert.match(portal, /changingInvoiceId === invoice\.id/);
 });
 
 test("client payment evidence is isolated from confirmed payment fields and staff can review it", async () => {

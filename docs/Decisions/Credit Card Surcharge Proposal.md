@@ -103,7 +103,11 @@ card invoice gets `AllowOnlineACHPayment: false` — each invoice enforces
 its own total against its own single allowed method.
 
 Trade-off: adds a step to checkout (client must commit to a method before
-seeing the invoice).
+seeing the invoice). The commitment is not a hard wall: until any funds are
+received, the client can reopen the choice and CaseDesk updates the same
+QuickBooks invoice in place. The original base amount is used each time so a
+new processing fee replaces, rather than compounds, the prior fee. Payment or
+refund activity locks the choice to preserve accounting history.
 
 ### Option C — Charge the surcharge after the fact
 Let the existing single invoice/link stand as-is (both methods allowed, no

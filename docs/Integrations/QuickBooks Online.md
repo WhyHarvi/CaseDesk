@@ -32,5 +32,7 @@ Token or API failure leaves sync-error/retry state and can delay invoice/payment
 
 When invoice creation returns a duplicate-document-number fault, CaseDesk queries that exact QuickBooks document number. It reuses a single matching, non-void invoice only after checking customer, total, and hosted-method flags; otherwise it rotates the unfinalized local number and retries once. This reconciles interrupted finalization without duplicating receivables.
 
+Before any funds are received, a client may change the selected payment method. CaseDesk reads the live invoice, requires its provider balance to equal its total, and performs a SyncToken-protected full update of the same QuickBooks invoice to replace its pricing lines and hosted-method flags. It never voids or creates a second receivable for this action; any provider or local payment/refund activity locks the method.
+
 ## Environment Variables
 `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`, `QBO_ENVIRONMENT`, `QBO_WEBHOOK_VERIFIER_TOKEN`, `QBO_WEBHOOK_POLL_MS`, `QBO_HOLD_RECONCILE_COOLDOWN_MS`, `MAIL_SETTINGS_ENCRYPTION_KEY`.
