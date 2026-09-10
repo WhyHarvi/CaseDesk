@@ -122,17 +122,21 @@ const workspaceTabDestinations = {
 // as a row of same-looking text labels — full Tailwind class strings
 // (not built from a color-name variable) since the JIT scanner only picks
 // up classes it can see written out literally in the source.
+// Each entry paints one folder-tab "divider": text is the label/icon color
+// (dark enough to read on both its own tint and the active white), bg is
+// the tint that makes it look like its own physical section, bgHover a
+// touch darker for the hover state.
 const workspaceTabVisuals = {
-  PROFILE: { icon: UserRound, active: "text-sky-700", bar: "bg-sky-500", idle: "text-sky-500", idleText: "text-sky-800/70", hoverText: "hover:text-sky-700" },
-  REMINDERS: { icon: BellRing, active: "text-amber-700", bar: "bg-amber-500", idle: "text-amber-500", idleText: "text-amber-800/70", hoverText: "hover:text-amber-700" },
-  QUESTIONNAIRES: { icon: ClipboardList, active: "text-violet-700", bar: "bg-violet-500", idle: "text-violet-500", idleText: "text-violet-800/70", hoverText: "hover:text-violet-700" },
-  DOCUMENTS: { icon: FolderLock, active: "text-indigo-700", bar: "bg-indigo-500", idle: "text-indigo-500", idleText: "text-indigo-800/70", hoverText: "hover:text-indigo-700" },
-  FORMS: { icon: FileText, active: "text-cyan-700", bar: "bg-cyan-500", idle: "text-cyan-500", idleText: "text-cyan-800/70", hoverText: "hover:text-cyan-700" },
-  TASKS: { icon: CheckCircle2, active: "text-emerald-700", bar: "bg-emerald-500", idle: "text-emerald-500", idleText: "text-emerald-800/70", hoverText: "hover:text-emerald-700" },
-  "AGREEMENTS & LETTERS": { icon: FileSignature, active: "text-fuchsia-700", bar: "bg-fuchsia-500", idle: "text-fuchsia-500", idleText: "text-fuchsia-800/70", hoverText: "hover:text-fuchsia-700" },
-  APPOINTMENTS: { icon: CalendarClock, active: "text-orange-700", bar: "bg-orange-500", idle: "text-orange-500", idleText: "text-orange-800/70", hoverText: "hover:text-orange-700" },
-  COMMUNICATION: { icon: MessageCircle, active: "text-teal-700", bar: "bg-teal-500", idle: "text-teal-500", idleText: "text-teal-800/70", hoverText: "hover:text-teal-700" },
-  BILLING: { icon: WalletCards, active: "text-rose-700", bar: "bg-rose-500", idle: "text-rose-500", idleText: "text-rose-800/70", hoverText: "hover:text-rose-700" },
+  PROFILE: { icon: UserRound, text: "text-sky-800", bg: "bg-sky-100", bgHover: "hover:bg-sky-200", bar: "bg-sky-500" },
+  REMINDERS: { icon: BellRing, text: "text-amber-800", bg: "bg-amber-100", bgHover: "hover:bg-amber-200", bar: "bg-amber-500" },
+  QUESTIONNAIRES: { icon: ClipboardList, text: "text-violet-800", bg: "bg-violet-100", bgHover: "hover:bg-violet-200", bar: "bg-violet-500" },
+  DOCUMENTS: { icon: FolderLock, text: "text-indigo-800", bg: "bg-indigo-100", bgHover: "hover:bg-indigo-200", bar: "bg-indigo-500" },
+  FORMS: { icon: FileText, text: "text-cyan-800", bg: "bg-cyan-100", bgHover: "hover:bg-cyan-200", bar: "bg-cyan-500" },
+  TASKS: { icon: CheckCircle2, text: "text-emerald-800", bg: "bg-emerald-100", bgHover: "hover:bg-emerald-200", bar: "bg-emerald-500" },
+  "AGREEMENTS & LETTERS": { icon: FileSignature, text: "text-fuchsia-800", bg: "bg-fuchsia-100", bgHover: "hover:bg-fuchsia-200", bar: "bg-fuchsia-500" },
+  APPOINTMENTS: { icon: CalendarClock, text: "text-orange-800", bg: "bg-orange-100", bgHover: "hover:bg-orange-200", bar: "bg-orange-500" },
+  COMMUNICATION: { icon: MessageCircle, text: "text-teal-800", bg: "bg-teal-100", bgHover: "hover:bg-teal-200", bar: "bg-teal-500" },
+  BILLING: { icon: WalletCards, text: "text-rose-800", bg: "bg-rose-100", bgHover: "hover:bg-rose-200", bar: "bg-rose-500" },
 };
 
 const workspaceTabFromSlug = (slug, availableTabs = caseWorkspaceTabs) =>
@@ -3916,9 +3920,13 @@ export default function CaseWorkspaceTabs({
 
   return (
     <article className="flex flex-col overflow-clip rounded-[2rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-      <div className="sticky top-0 z-20 shrink-0 rounded-t-[2rem] border-b border-slate-200/70 bg-slate-100/90 px-2 pt-2 shadow-[0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl">
-        <div className="scrollbar-hidden flex gap-1 overflow-x-auto pb-0.5">
-          {visibleCaseWorkspaceTabs.map((tab) => {
+      <div className="sticky top-0 z-20 shrink-0 rounded-t-[2rem] border-b border-slate-200/70 bg-slate-200/60 px-3 pt-3 shadow-[0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl">
+        {/* Styled like a stack of file-folder dividers: each tab is a
+            trapezoid (clip-path), tinted in its own color, overlapping the
+            next so several sections stay visibly "layered" behind whichever
+            one is currently pulled to the front (raised, white, full color). */}
+        <div className="scrollbar-hidden flex items-end overflow-x-auto">
+          {visibleCaseWorkspaceTabs.map((tab, index) => {
             const isActive = activeTab === tab;
             const badge = caseTabCounts[workspaceTabAccessKeys[tab]];
             const visuals = workspaceTabVisuals[tab];
@@ -3929,15 +3937,18 @@ export default function CaseWorkspaceTabs({
                 key={tab}
                 type="button"
                 onClick={() => selectWorkspaceTab(tab)}
-                className={`relative flex min-w-max items-center gap-1.5 rounded-t-[1rem] px-4 py-2.5 text-[11px] font-semibold tracking-[0.08em] transition ${
+                style={{
+                  clipPath: "polygon(7% 0%, 93% 0%, 100% 100%, 0% 100%)",
+                  zIndex: isActive ? 50 : index,
+                  marginLeft: index === 0 ? 0 : "-0.85rem",
+                }}
+                className={`relative flex min-w-max shrink-0 items-center gap-1.5 px-6 pb-2.5 text-[11px] font-semibold tracking-[0.08em] transition-all duration-150 ${
                   isActive
-                    ? `bg-white ${visuals?.active || "text-slate-950"} shadow-[0_-1px_0_rgba(255,255,255,0.9),0_10px_28px_rgba(15,23,42,0.08)]`
-                    : `${visuals?.idleText || "text-slate-500"} hover:bg-white/60 ${visuals?.hoverText || "hover:text-slate-800"}`
+                    ? `translate-y-0 bg-white pt-3.5 ${visuals?.text || "text-slate-950"} shadow-[0_-6px_16px_rgba(15,23,42,0.12)]`
+                    : `translate-y-1 pt-2.5 ${visuals?.bg || "bg-slate-100"} ${visuals?.bgHover || "hover:bg-slate-200"} ${visuals?.text || "text-slate-600"} opacity-80 hover:translate-y-0 hover:opacity-100`
                 }`}
               >
-                {TabIcon ? (
-                  <TabIcon className={`h-3.5 w-3.5 shrink-0 ${isActive ? visuals.active : visuals.idle}`} />
-                ) : null}
+                {TabIcon ? <TabIcon className="h-3.5 w-3.5 shrink-0" /> : null}
                 {tab}
                 {badge?.total ? (
                   <span
@@ -3948,7 +3959,7 @@ export default function CaseWorkspaceTabs({
                   </span>
                 ) : null}
                 {isActive ? (
-                  <span className={`absolute inset-x-0 -bottom-1 h-1 rounded-full ${visuals?.bar || "bg-white"}`} />
+                  <span className={`absolute inset-x-[7%] bottom-0 h-1 ${visuals?.bar || "bg-slate-500"}`} />
                 ) : null}
               </button>
             );
