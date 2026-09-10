@@ -30,6 +30,8 @@ const PAYMENT_TYPE_META = {
   disbursement: { label: "Govt. fee disbursement", icon: Landmark, tint: "bg-orange-50 text-orange-700" },
 };
 
+const AUTOMATIC_PROCESSING_FEE_KINDS = new Set(["CardSurcharge", "BankTransferFee"]);
+
 // One hue = one meaning across the whole Billing tab: slate neutral, amber
 // attention/partial, emerald success, rose danger, violet/teal for refund
 // direction. "PartiallyRefunded" used to share fuchsia with the unrelated
@@ -412,7 +414,9 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
 }
 
 function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
-  const [paymentType, setPaymentType] = useState(categories[0]?.code || "fees");
+  const selectableCategories = categories.filter((category) => !AUTOMATIC_PROCESSING_FEE_KINDS.has(category.kind));
+  const firstSelectableCode = selectableCategories[0]?.code || "fees";
+  const [paymentType, setPaymentType] = useState(firstSelectableCode);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -423,7 +427,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
 
   useEffect(() => {
     if (open) {
-      setPaymentType(categories[0]?.code || "fees");
+      setPaymentType(firstSelectableCode);
       setDescription("");
       setAmount("");
       setDueDate("");
@@ -431,7 +435,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
       setError("");
       setErrorHint("");
     }
-  }, [open]);
+  }, [open, firstSelectableCode]);
 
   async function submit(event) {
     event.preventDefault();
@@ -467,7 +471,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
               <div>
                 <p className="text-xs font-medium text-slate-600">Payment type</p>
                 <div className="mt-1.5 grid grid-cols-2 gap-2">
-                  {categories.map((category) => {
+                  {selectableCategories.map((category) => {
                     const key = category.code;
                     const meta = PAYMENT_TYPE_META[key] || PAYMENT_TYPE_META.fees;
                     const Icon = meta.icon;

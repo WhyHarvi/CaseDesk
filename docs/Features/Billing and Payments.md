@@ -33,7 +33,7 @@ Financial route/controller families include `paymentRoutes.js`, `paymentsOvervie
 ## Business Rules
 Invoice totals, allocations, balances, refund/void ordering, tax/item mappings, two-ledger display, and approval status must remain consistent. Paid invoice mutation is validated. External failures are recorded for reconciliation.
 
-Staff-created QuickBooks invoices begin as local `AwaitingPaymentMethod` records containing the base charge, tax, and discount. The client chooses credit card or bank transfer in the portal; CaseDesk then creates the real QuickBooks invoice in place, adds the configured method-specific fee, and enables only that payment method. Payment-schedule installments use the same deferred-choice flow. Online payments remain automatically matched to the QuickBooks invoice; offline payments are recorded through the existing staff workflow.
+Staff-created QuickBooks invoices begin as local `AwaitingPaymentMethod` records containing the base charge, tax, and discount. The client chooses credit card or bank transfer in the portal; CaseDesk then creates the real QuickBooks invoice in place, adds the configured method-specific fee, and enables only that payment method. `CardSurcharge` and `BankTransferFee` categories are system-owned outputs of this choice and cannot be selected as the base payment type. Payment-schedule installments use the same deferred-choice flow. Online payments remain automatically matched to the QuickBooks invoice; offline payments are recorded through the existing staff workflow.
 
 ## Permissions
 Requires financial capability and Payments page or Billing case tab. Sensitive approvals and configuration add admin/role rules; all records remain agency/case scoped.

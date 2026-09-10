@@ -26,6 +26,7 @@ export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Governm
 export const ACCOUNTING_PROVIDERS = Object.freeze({ QUICKBOOKS: "QuickBooks", CASH: "CaseDeskCash" });
 export const MANUAL_PAYMENT_METHODS = Object.freeze(["Cash", "ETransfer", "Cheque", "Wire", "Debit", "BankDraft"]);
 const TAXABLE_FEE_KINDS = new Set(["Professional", "Consultation"]);
+const AUTOMATIC_PROCESSING_FEE_KINDS = new Set(["CardSurcharge", "BankTransferFee"]);
 
 function money(value) {
   return Math.round(Number(value || 0) * 100) / 100;
@@ -534,6 +535,9 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     if (existing) return existing;
   }
   const category = await requireFeeCategory(agencyId, paymentType);
+  if (AUTOMATIC_PROCESSING_FEE_KINDS.has(category.kind)) {
+    throw createHttpError(400, "Processing fees are added automatically after the client chooses an online payment method.", "AUTOMATIC_FEE_CATEGORY");
+  }
   const trimmedDescription = String(description || "").trim().slice(0, 500);
   if (!trimmedDescription) throw createHttpError(400, "A description is required.", "VALIDATION_ERROR");
   const numericAmount = Number(amount);

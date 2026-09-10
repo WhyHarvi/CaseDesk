@@ -18,11 +18,14 @@ test("staff-created invoices defer the online payment method to the client", asy
   assert.match(service, /deferMethodChoice = false/);
   assert.match(service, /deferMethodChoice: accountingProvider === ACCOUNTING_PROVIDERS\.QUICKBOOKS && deferMethodChoice/);
   assert.match(service, /status: "AwaitingPaymentMethod"/);
+  assert.match(service, /AUTOMATIC_PROCESSING_FEE_KINDS\.has\(category\.kind\)/);
+  assert.match(service, /Processing fees are added automatically after the client chooses an online payment method/);
   assert.match(portalController, /clientId: link\.clientId, status: "AwaitingPaymentMethod"/);
   assert.match(portalController, /finalizeAwaitingPaymentMethodInvoice/);
 
   assert.doesNotMatch(workspace, /PAYMENT_METHOD_OPTIONS/);
   assert.doesNotMatch(workspace, /paymentMethod:/);
+  assert.match(workspace, /categories\.filter\(\(category\) => !AUTOMATIC_PROCESSING_FEE_KINDS\.has\(category\.kind\)\)/);
   assert.match(workspace, /Client chooses the online payment method/);
   assert.match(workspace, /invoice\.status !== "AwaitingPaymentMethod"/);
 
