@@ -272,23 +272,41 @@ test("opening a form reloads the authoritative representative and overwrites sta
   assert.match(controller, /hasSavedSignature && !signatureEditor \? \{ strokes: signatureStrokes, name: representative\.fullName, fillFractionX: signatureFillFraction\.x, fillFractionY: signatureFillFraction\.y \} : null/);
 });
 
-test("editable IMM 5476 signatures can be resized directly on the PDF while signed copies stay immutable", async () => {
-  const [schema, controller, routes, workspace, viewer] = await Promise.all([
+test("editable IMM 5476 signatures can be resized directly on the PDF, for either signer, even after the form is client-signed", async () => {
+  const [schema, controller, routes, service, workspace, viewer] = await Promise.all([
     source("../prisma/schema.prisma"),
     source("../src/controllers/caseFormController.js"),
     source("../src/routes/caseFormRoutes.js"),
+    source("../src/services/imm5476SignatureService.js"),
     source("../../frontend/src/components/case-profile/CaseFormsWorkspace.jsx"),
     source("../../frontend/src/components/case-profile/XfaPdfPreviewOverlay.jsx"),
   ]);
   assert.match(schema, /signatureScale\s+Float\?\s+@map\("signature_scale"\)/);
   assert.match(schema, /signatureScaleX\s+Float\?\s+@map\("signature_scale_x"\)/);
   assert.match(schema, /signatureScaleY\s+Float\?\s+@map\("signature_scale_y"\)/);
+  assert.match(schema, /applicantSignatureScaleX\s+Float\?\s+@map\("applicant_signature_scale_x"\)/);
+  assert.match(schema, /applicantSignatureScaleY\s+Float\?\s+@map\("applicant_signature_scale_y"\)/);
   assert.match(routes, /router\.get\("\/:id\/signature-editor", asyncHandler\(getCaseFormSignatureEditor\)\)/);
+  assert.match(routes, /router\.post\("\/:id\/signature-editor", asyncHandler\(updateCaseFormSignatureTransform\)\)/);
   assert.match(controller, /export async function getCaseFormSignatureEditor/);
-  assert.match(controller, /\["ClientSigned", "Finalized"\]\.includes\(form\.currentCopyType\)/);
+  assert.match(controller, /export async function updateCaseFormSignatureTransform/);
+  // Finalized/locked forms are still off-limits (assertFormUnlocked), but a
+  // merely client-signed one is no longer blanket-blocked — that's the
+  // whole point of this feature.
+  assert.doesNotMatch(controller, /\["ClientSigned", "Finalized"\]\.includes\(form\.currentCopyType\)/);
+  assert.match(controller, /const target = req\.query\.target === "applicant" \? "applicant" : "representative"/);
+  assert.match(controller, /regenerateSignedImm5476Copy\(\{ form: existing, target, scaleX, scaleY, actorUserId: req\.user\.id, include \}\)/);
   assert.match(controller, /event: "SignatureResized"/);
+  // A signed copy's ink is baked into the stored PDF bytes, not re-derived
+  // per view — resizing it has to re-stamp both signatures fresh from the
+  // last pre-signature version and version in the result, not just patch a
+  // scale field.
+  assert.match(service, /export async function regenerateSignedImm5476Copy/);
+  assert.match(service, /copyType: \{ notIn: \["ClientSigned", "Finalized"\] \}/);
   assert.match(workspace, /\?signatureEditor=1/);
   assert.match(workspace, /onSignatureTransformChange/);
+  assert.match(workspace, /Resize client signature/);
+  assert.match(workspace, /openStored\(item, false, "applicant"\)/);
   assert.match(viewer, /SignatureResizeLayer/);
   assert.match(viewer, /drag side handles for width/);
   assert.match(viewer, /W \{Math\.round\(scales\.x \* 100\)\}% · H \{Math\.round\(scales\.y \* 100\)\}%/);

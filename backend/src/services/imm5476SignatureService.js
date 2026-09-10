@@ -142,3 +142,116 @@ export async function createSignedImm5476Copy({ request, applicantStrokes, appli
     throw error;
   }
 }
+
+// Adjusting a signature's size/placement after the fact — for either the
+// representative or the applicant, and whether or not the form has already
+// been client-signed. A signed copy's ink is baked into the actual stored
+// PDF bytes (not re-derived on every view the way an unsigned copy is), so
+// there's no "just change a scale field" option once signed — the only way
+// to move/resize what's already on the page is to re-stamp both signatures
+// fresh from the last pre-signature copy, using each signature's own
+// current (or just-adjusted) scale, and version the result in as the new
+// current copy. Both signatures are always re-stamped together (never
+// conditionally skipped the way createSignedImm5476Copy does) because the
+// source here is guaranteed to be the clean, pre-signature copy — neither
+// mark exists on it yet.
+export async function regenerateSignedImm5476Copy({ form, target, scaleX, scaleY, actorUserId, include }) {
+  const request = await prisma.caseFormSignatureRequest.findFirst({
+    where: { caseFormId: form.id, status: "Signed" },
+    orderBy: { signedAt: "desc" },
+  });
+  if (!request?.applicantSignatureStrokes) {
+    throw createHttpError(409, "No signed client signature was found on this form to adjust.");
+  }
+  const lastUnsigned = await prisma.caseFormVersion.findFirst({
+    where: { caseFormId: form.id, copyType: { notIn: ["ClientSigned", "Finalized"] } },
+    orderBy: { versionNumber: "desc" },
+    select: { storageKey: true },
+  });
+  if (!lastUnsigned) throw createHttpError(409, "The original filled copy of this form is no longer available.");
+  const source = await downloadStorageFile(DOCUMENT_BUCKET, lastUnsigned.storageKey, { allowMissing: true });
+  if (!source) throw createHttpError(409, "The filled IMM 5476 copy is not available.");
+
+  const agency = await prisma.agency.findUnique({ where: { id: form.agencyId }, select: { governmentFormSignatureScale: true } });
+  const representativeFraction = {
+    x: resolveSignatureFillFraction(target === "representative" ? scaleX : (form.signatureScaleX ?? form.signatureScale ?? agency?.governmentFormSignatureScale)),
+    y: resolveSignatureFillFraction(target === "representative" ? scaleY : (form.signatureScaleY ?? form.signatureScale ?? agency?.governmentFormSignatureScale)),
+  };
+  const applicantFraction = {
+    x: resolveSignatureFillFraction(target === "applicant" ? scaleX : (form.applicantSignatureScaleX ?? agency?.governmentFormSignatureScale)),
+    y: resolveSignatureFillFraction(target === "applicant" ? scaleY : (form.applicantSignatureScaleY ?? agency?.governmentFormSignatureScale)),
+  };
+
+  const task = pdfjs.getDocument({ data: new Uint8Array(source), enableXfa: true });
+  let signedBuffer;
+  try {
+    const document = await task.promise;
+    // Adjusting a box's size doesn't re-date the signature — keep whatever
+    // day it was actually signed on, not today.
+    const signedDate = (request.signedAt || request.consentedAt || new Date()).toISOString().slice(0, 10);
+    await applyFieldValues(document, [["547R", true]]);
+    document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
+    document.annotationStorage.setValue(APPLICANT_SIGNATURE.dateFieldId, { value: signedDate });
+    document.annotationStorage.setValue(
+      `pdfjs_internal_editor_casedesk-representative-${randomUUID()}`,
+      signatureAnnotation(request.representativeSignatureStrokes, REPRESENTATIVE_SIGNATURE, request.representativeNameSnapshot, representativeFraction),
+    );
+    document.annotationStorage.setValue(
+      `pdfjs_internal_editor_casedesk-applicant-${randomUUID()}`,
+      signatureAnnotation(request.applicantSignatureStrokes, APPLICANT_SIGNATURE, request.applicantNameSnapshot, applicantFraction),
+    );
+    signedBuffer = Buffer.from(await document.saveDocument());
+  } catch (error) {
+    throw createHttpError(500, `The signed IMM 5476 could not be regenerated: ${error.message}`);
+  } finally {
+    await task.destroy().catch(() => {});
+  }
+
+  const baseName = String(form.originalFilename || "IMM5476.pdf").replace(/\.pdf$/i, "").replace(/-client-signed$/i, "");
+  const originalFilename = `${baseName}-client-signed.pdf`;
+  const storageKey = path.posix.join(form.agencyId, form.caseId, "forms", `${randomUUID()}.pdf`);
+  const fileHash = hashBuffer(signedBuffer);
+  await uploadStorageFile(DOCUMENT_BUCKET, storageKey, signedBuffer, "application/pdf");
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const latest = await tx.caseFormVersion.aggregate({ where: { caseFormId: form.id }, _max: { versionNumber: true } });
+      const versionNumber = (latest._max.versionNumber || 0) + 1;
+      await tx.caseFormVersion.create({
+        data: {
+          agencyId: form.agencyId,
+          caseFormId: form.id,
+          versionNumber,
+          source: "Generated",
+          copyType: "ClientSigned",
+          language: form.language || "English",
+          sourceRevision: form.sourceRevision,
+          fileHash,
+          officialUrl: form.officialUrl,
+          mappingVersion: form.mappingVersion,
+          storageKey,
+          originalFilename,
+          mimeType: "application/pdf",
+          fileSize: signedBuffer.length,
+          createdById: actorUserId,
+        },
+      });
+      return tx.caseForm.update({
+        where: { id: form.id },
+        data: {
+          storageKey,
+          originalFilename,
+          mimeType: "application/pdf",
+          fileSize: signedBuffer.length,
+          fileHash,
+          uploadedById: actorUserId,
+          ...(target === "representative" ? { signatureScaleX: scaleX, signatureScaleY: scaleY } : { applicantSignatureScaleX: scaleX, applicantSignatureScaleY: scaleY }),
+        },
+        ...(include ? { include } : {}),
+      });
+    });
+  } catch (error) {
+    await removeStorageFile(DOCUMENT_BUCKET, storageKey);
+    throw error;
+  }
+}

@@ -88,6 +88,7 @@ function FormActions({
   onAudit,
   onSaveTemplate,
   onUnlock,
+  onResizeClientSignature,
   permissions,
   onDelete,
 }) {
@@ -231,6 +232,16 @@ function FormActions({
                 <ScrollText className="h-3.5 w-3.5 text-slate-400" />
                 Audit history
               </button>
+              {onResizeClientSignature && item.currentCopyType === "ClientSigned" && !item.lockedAt && permissions.canEdit ? (
+                <button
+                  type="button"
+                  onClick={action(onResizeClientSignature)}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-slate-400" />
+                  Resize client signature
+                </button>
+              ) : null}
               <div className="my-1 border-t border-slate-100" />
               {!item.lockedAt && permissions.canEdit ? (
                 <>
@@ -2304,7 +2315,7 @@ export default function CaseFormsWorkspace({
     return updated;
   }
 
-  async function openStored(item, download = false) {
+  async function openStored(item, download = false, signatureTarget = "representative") {
     const likelyPdf =
       item.mimeType === "application/pdf" ||
       String(item.originalFilename || "")
@@ -2329,16 +2340,15 @@ export default function CaseFormsWorkspace({
         !download &&
         permissions.canEdit &&
         !currentItem.lockedAt &&
-        !["ClientSigned", "Finalized"].includes(currentItem.currentCopyType) &&
         String(currentItem.formNumber || "").replace(/[^a-z0-9]/gi, "").toUpperCase() === "IMM5476";
       let signatureEditor = null;
       if (canResizeSignature) {
         try {
-          const editorResponse = await api.get(`/case-forms/${currentItem.id}/signature-editor`);
+          const editorResponse = await api.get(`/case-forms/${currentItem.id}/signature-editor?target=${signatureTarget}`);
           signatureEditor = editorResponse.data.data;
         } catch (editorError) {
-          // A representative without a saved signature should not prevent the
-          // form itself from opening; it simply has nothing to resize yet.
+          // Nothing to resize yet (no saved representative signature, or the
+          // applicant hasn't signed) shouldn't prevent the form from opening.
           if (editorError.response?.status !== 409) throw editorError;
         }
       }
@@ -2663,6 +2673,7 @@ export default function CaseFormsWorkspace({
                   onAudit={() => showAudit(item)}
                   onSaveTemplate={() => saveAsAgencyTemplate(item)}
                   onUnlock={() => unlock(item)}
+                  onResizeClientSignature={isImm5476Form(item) ? () => openStored(item, false, "applicant") : null}
                   permissions={permissions}
                   onUpload={(copyType) => {
                     uploadTarget.current = { item, copyType };
@@ -2746,7 +2757,11 @@ export default function CaseFormsWorkspace({
           onSignatureTransformChange={
             pdfPreview.signatureEditor
               ? async ({ x, y }) => {
-                  const response = await api.patch(`/case-forms/${pdfPreview.item.id}`, { signatureScaleX: x, signatureScaleY: y });
+                  const response = await api.post(`/case-forms/${pdfPreview.item.id}/signature-editor`, {
+                    target: pdfPreview.signatureEditor.target || "representative",
+                    scaleX: x,
+                    scaleY: y,
+                  });
                   const updated = response.data.data;
                   setForms((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
                   setPdfPreview((current) => current ? { ...current, item: updated } : current);

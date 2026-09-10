@@ -4075,6 +4075,11 @@ model CaseForm {
   signatureScale             Float?                     @map("signature_scale")
   signatureScaleX            Float?                     @map("signature_scale_x")
   signatureScaleY            Float?                     @map("signature_scale_y")
+  // Same idea as signatureScale(X/Y) above, but for the applicant's own
+  // drawn signature once they've signed — independent from the
+  // representative's, since the two boxes are adjusted separately.
+  applicantSignatureScaleX   Float?                     @map("applicant_signature_scale_x")
+  applicantSignatureScaleY   Float?                     @map("applicant_signature_scale_y")
   formNumber                 String?                    @map("form_number")
   title                      String
   normalizedName             String                     @map("normalized_name")

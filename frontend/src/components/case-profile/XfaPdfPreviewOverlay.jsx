@@ -226,6 +226,10 @@ export default function XfaPdfPreviewOverlay({
         linkService.setViewer(pdfViewer);
         eventBus.on("pagesinit", () => {
           pdfViewer.currentScaleValue = "page-width";
+          // Jump straight to whichever page holds the signature being
+          // resized — the representative's and applicant's boxes sit on
+          // different pages, and neither reliably pre-renders on load.
+          if (signatureEditor) pdfViewer.currentPageNumber = signatureEditor.pageIndex + 1;
           setLoading(false);
         });
         eventBus.on("pagechanging", ({ pageNumber }) => setPage(pageNumber));
@@ -557,7 +561,7 @@ export default function XfaPdfPreviewOverlay({
       ) : null}
       {signatureEditor ? (
         <div className="flex items-center justify-between gap-3 border-b border-sky-100 bg-sky-50 px-4 py-2 text-[11px] text-sky-900">
-          <span><strong>Resize signature:</strong> drag side handles for width, top or bottom handles for height, or a corner for both. Hold Shift on a corner to keep proportions.</span>
+          <span><strong>Resize {signatureEditor.signerName ? `${signatureEditor.signerName}'s` : "the"} signature:</strong> drag side handles for width, top or bottom handles for height, or a corner for both. Hold Shift on a corner to keep proportions.</span>
           <span className="shrink-0 font-semibold tabular-nums text-sky-700">{signatureSizeStatus || `W ${Math.round(signatureScales.x * 100)}% · H ${Math.round(signatureScales.y * 100)}%`}</span>
         </div>
       ) : null}

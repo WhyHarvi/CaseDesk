@@ -12,7 +12,8 @@ import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds,
 import { caseAccessWhere } from "../middleware/authorization.js";
 import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
 import { imm5476RepresentativeSignatureName, rebuildImm5476FromOriginal, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
-import { MAX_SIGNATURE_FILL_FRACTION, MIN_SIGNATURE_FILL_FRACTION, REPRESENTATIVE_SIGNATURE, resolveSignatureFillFraction } from "../services/imm5476SignatureFields.js";
+import { APPLICANT_SIGNATURE, MAX_SIGNATURE_FILL_FRACTION, MIN_SIGNATURE_FILL_FRACTION, REPRESENTATIVE_SIGNATURE, resolveSignatureFillFraction } from "../services/imm5476SignatureFields.js";
+import { regenerateSignedImm5476Copy } from "../services/imm5476SignatureService.js";
 import { isTracedImageSignature, traceSignatureImageToStrokes } from "../services/signatureImageTrace.js";
 
 const maxFileSize = 25 * 1024 * 1024;
@@ -466,7 +467,11 @@ export async function serveCaseFormFile(req, res) {
     await requireFormPermission(req, "canEdit");
     assertFormUnlocked(data);
     if (!isImm5476) throw createHttpError(409, "Signature resizing is currently available for IMM 5476 forms");
-    if (isSignedCopy) throw createHttpError(423, "A signed or finalized form cannot be changed");
+    // A signed copy can still be opened for resizing (assertFormUnlocked
+    // above already blocks Finalized/locked forms) — its stored bytes are
+    // just served as-is below, same as any other view of a signed copy; the
+    // live drag preview draws on top of it, and committing regenerates the
+    // real file via regenerateSignedImm5476Copy.
   }
   const representative = data.representativeUser;
   const hasSavedSignature = representative?.formSignatureImage && Array.isArray(representative.formSignatureStrokes) && representative.formSignatureStrokes.length;
@@ -545,25 +550,61 @@ export async function getCaseFormSignatureEditor(req, res) {
       signatureScale: true,
       signatureScaleX: true,
       signatureScaleY: true,
+      applicantSignatureScaleX: true,
+      applicantSignatureScaleY: true,
       representativeUser: { select: { fullName: true, formSignatureImage: true, formSignatureStrokes: true } },
     },
   });
   if (!form) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(form);
   if (String(form.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== "IMM5476") throw createHttpError(409, "Signature resizing is currently available for IMM 5476 forms");
-  if (["ClientSigned", "Finalized"].includes(form.currentCopyType)) throw createHttpError(423, "A signed or finalized form cannot be changed");
-  const representative = form.representativeUser;
-  if (!representative || !Array.isArray(representative.formSignatureStrokes) || !representative.formSignatureStrokes.length) {
-    throw createHttpError(409, "The selected representative must save a signature before it can be resized on the form");
-  }
-  const strokes = representative.formSignatureImage && isTracedImageSignature(representative.formSignatureStrokes)
-    ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
-    : representative.formSignatureStrokes;
+  const target = req.query.target === "applicant" ? "applicant" : "representative";
   const agency = await prisma.agency.findUnique({ where: { id: req.user.agencyId }, select: { governmentFormSignatureScale: true } });
+
+  // Once a form is client-signed, the applicant's (and, if it was re-signed
+  // on top of, the representative's) strokes on file are whatever was
+  // actually signed — the snapshot on the signed request — not necessarily
+  // whatever the representative's live profile signature looks like today.
+  const signedRequest = form.currentCopyType === "ClientSigned"
+    ? await prisma.caseFormSignatureRequest.findFirst({ where: { caseFormId: form.id, status: "Signed" }, orderBy: { signedAt: "desc" } })
+    : null;
+
+  if (target === "applicant") {
+    if (!signedRequest?.applicantSignatureStrokes) throw createHttpError(409, "The applicant hasn't signed this form yet — nothing to adjust.");
+    const fallbackScale = agency?.governmentFormSignatureScale;
+    return res.json({ data: {
+      target,
+      strokes: signedRequest.applicantSignatureStrokes,
+      signerName: signedRequest.applicantNameSnapshot,
+      pageIndex: APPLICANT_SIGNATURE.pageIndex,
+      rect: APPLICANT_SIGNATURE.rect,
+      scaleX: resolveSignatureFillFraction(form.applicantSignatureScaleX ?? fallbackScale),
+      scaleY: resolveSignatureFillFraction(form.applicantSignatureScaleY ?? fallbackScale),
+      minScale: MIN_SIGNATURE_FILL_FRACTION,
+      maxScale: MAX_SIGNATURE_FILL_FRACTION,
+    } });
+  }
+
+  let strokes;
+  let signerName;
+  if (signedRequest) {
+    strokes = signedRequest.representativeSignatureStrokes;
+    signerName = signedRequest.representativeNameSnapshot;
+  } else {
+    const representative = form.representativeUser;
+    if (!representative || !Array.isArray(representative.formSignatureStrokes) || !representative.formSignatureStrokes.length) {
+      throw createHttpError(409, "The selected representative must save a signature before it can be resized on the form");
+    }
+    strokes = representative.formSignatureImage && isTracedImageSignature(representative.formSignatureStrokes)
+      ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
+      : representative.formSignatureStrokes;
+    signerName = representative.fullName;
+  }
   const fallbackScale = form.signatureScale ?? agency?.governmentFormSignatureScale;
   res.json({ data: {
+    target,
     strokes,
-    signerName: representative.fullName,
+    signerName,
     pageIndex: REPRESENTATIVE_SIGNATURE.pageIndex,
     rect: REPRESENTATIVE_SIGNATURE.rect,
     scaleX: resolveSignatureFillFraction(form.signatureScaleX ?? fallbackScale),
@@ -571,6 +612,43 @@ export async function getCaseFormSignatureEditor(req, res) {
     minScale: MIN_SIGNATURE_FILL_FRACTION,
     maxScale: MAX_SIGNATURE_FILL_FRACTION,
   } });
+}
+
+export async function updateCaseFormSignatureTransform(req, res) {
+  await requireFormPermission(req, "canEdit");
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
+  if (!existing) throw createHttpError(404, "Case form not found");
+  assertFormUnlocked(existing);
+  if (String(existing.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== "IMM5476") {
+    throw createHttpError(409, "Signature resizing is currently available for IMM 5476 forms");
+  }
+  const target = req.body?.target === "applicant" ? "applicant" : "representative";
+  const scaleX = Number(req.body?.scaleX);
+  const scaleY = Number(req.body?.scaleY);
+  if (!Number.isFinite(scaleX) || scaleX < MIN_SIGNATURE_FILL_FRACTION || scaleX > MAX_SIGNATURE_FILL_FRACTION || !Number.isFinite(scaleY) || scaleY < MIN_SIGNATURE_FILL_FRACTION || scaleY > MAX_SIGNATURE_FILL_FRACTION) {
+    throw createHttpError(400, `Signature dimensions must be between ${Math.round(MIN_SIGNATURE_FILL_FRACTION * 100)}% and ${Math.round(MAX_SIGNATURE_FILL_FRACTION * 100)}%`);
+  }
+  let data;
+  if (existing.currentCopyType === "ClientSigned") {
+    // The ink is already baked into the stored PDF's bytes — a scale field
+    // alone changes nothing visible. Re-stamp both signatures fresh from the
+    // pre-signature copy and version the result in as the new current one.
+    data = await regenerateSignedImm5476Copy({ form: existing, target, scaleX, scaleY, actorUserId: req.user.id, include });
+  } else {
+    if (target === "applicant") throw createHttpError(409, "The applicant hasn't signed this form yet — nothing to adjust.");
+    // Not yet signed: the representative's mark is re-stamped fresh every
+    // time the unsigned copy is viewed (serveCaseFormFile), so persisting
+    // the scale here is all that's needed — no regeneration to do now.
+    data = await prisma.caseForm.update({ where: { id: existing.id }, data: { signatureScaleX: scaleX, signatureScaleY: scaleY }, include });
+  }
+  await recordFormAudit({
+    form: data,
+    event: "SignatureResized",
+    details: `${target === "applicant" ? "Applicant" : "Representative"} signature resized to ${Math.round(scaleX * 100)}% wide × ${Math.round(scaleY * 100)}% high`,
+    metadata: { target, scaleX, scaleY },
+    userId: req.user.id,
+  });
+  res.json({ data });
 }
 
 export async function updateCaseForm(req, res) {
