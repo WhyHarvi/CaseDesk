@@ -3,16 +3,16 @@ import { createPortal } from "react-dom";
 import { Maximize2, Minimize2, RotateCcw } from "lucide-react";
 
 // Replays normalized [0,1] stroke points into whatever pixel size the canvas
-// currently has. Since strokes are stored as fractions of the canvas's own
-// width/height (not fixed pixel coordinates), this works whether the canvas
-// just resized (window resize, orientation change) or swapped to the
+// currently has. Strokes are stored as fractions of the canvas's own
+// width/height (not fixed pixel coordinates), so this works whether the
+// canvas just resized (window resize, orientation change) or swapped to the
 // full-screen canvas below — same signature, redrawn to fit.
 function redraw(canvas, context, strokes) {
   context.clearRect(0, 0, canvas.width, canvas.height);
   for (const stroke of strokes) {
     if (!stroke.length) continue;
-    context.beginPath();
     const [firstX, firstY] = stroke[0];
+    context.beginPath();
     context.moveTo(firstX * canvas.width, firstY * canvas.height);
     if (stroke.length === 1) {
       // A tap-only stroke needs a visible dot, not an invisible zero-length path.
@@ -21,13 +21,6 @@ function redraw(canvas, context, strokes) {
     for (const [x, y] of stroke) context.lineTo(x * canvas.width, y * canvas.height);
     context.stroke();
   }
-}
-
-function configureContext(context, dpr) {
-  context.lineCap = "round";
-  context.lineJoin = "round";
-  context.lineWidth = 2.75 * dpr;
-  context.strokeStyle = "#0f172a";
 }
 
 // Matching the canvas's internal pixel buffer to its actual displayed size
@@ -48,37 +41,11 @@ function resizeCanvas(canvas, strokes) {
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
-  configureContext(context, dpr);
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = 2.75 * dpr;
+  context.strokeStyle = "#0f172a";
   redraw(canvas, context, strokes);
-}
-
-function SignatureCanvas({ disabled, canvasRef, onObserve, onPointerDown, onPointerMove, onPointerUp, hasSignature, className = "" }) {
-  const attachRef = useCallback(
-    (node) => {
-      canvasRef.current = node;
-      onObserve(node);
-    },
-    [canvasRef, onObserve],
-  );
-  return (
-    <div className={`relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-inner ${className}`}>
-      <canvas
-        ref={attachRef}
-        aria-label="Draw your signature"
-        className="block h-full w-full touch-none cursor-crosshair"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      />
-      <div className="pointer-events-none absolute inset-x-5 bottom-7 border-b border-dashed border-slate-300" />
-      {!hasSignature ? (
-        <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-5 text-center text-sm text-slate-400">
-          Draw with your finger, stylus, or mouse
-        </p>
-      ) : null}
-    </div>
-  );
 }
 
 export default function SignaturePad({ disabled = false, onChange, onStrokesChange }) {
@@ -90,7 +57,8 @@ export default function SignaturePad({ disabled = false, onChange, onStrokesChan
   const [hasSignature, setHasSignature] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
-  const observeCanvas = useCallback((node) => {
+  const attachCanvas = useCallback((node) => {
+    canvasRef.current = node;
     if (resizeObserverRef.current) {
       resizeObserverRef.current.disconnect();
       resizeObserverRef.current = null;
@@ -175,15 +143,27 @@ export default function SignaturePad({ disabled = false, onChange, onStrokesChan
     onStrokesChange?.([]);
   }
 
-  const canvasProps = {
-    disabled,
-    canvasRef,
-    onObserve: observeCanvas,
-    onPointerDown: startDrawing,
-    onPointerMove: draw,
-    onPointerUp: finishDrawing,
-    hasSignature,
-  };
+  function canvasBox(className) {
+    return (
+      <div className={`relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-inner ${className}`}>
+        <canvas
+          ref={attachCanvas}
+          aria-label="Draw your signature"
+          className="block h-full w-full touch-none cursor-crosshair"
+          onPointerDown={startDrawing}
+          onPointerMove={draw}
+          onPointerUp={finishDrawing}
+          onPointerCancel={finishDrawing}
+        />
+        <div className="pointer-events-none absolute inset-x-5 bottom-7 border-b border-dashed border-slate-300" />
+        {!hasSignature ? (
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-5 text-center text-sm text-slate-400">
+            Draw with your finger, stylus, or mouse
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   if (fullscreen && typeof document !== "undefined") {
     return createPortal(
@@ -199,9 +179,7 @@ export default function SignaturePad({ disabled = false, onChange, onStrokesChan
             Done
           </button>
         </header>
-        <div className="min-h-0 flex-1 p-5">
-          <SignatureCanvas {...canvasProps} className="h-full" />
-        </div>
+        <div className="min-h-0 flex-1 p-5">{canvasBox("h-full")}</div>
         <footer className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 pb-[max(env(safe-area-inset-bottom),1rem)]">
           <p className="text-[11px] leading-4 text-slate-400">Keep your signature inside the box.</p>
           <button
@@ -221,7 +199,7 @@ export default function SignaturePad({ disabled = false, onChange, onStrokesChan
 
   return (
     <div>
-      <SignatureCanvas {...canvasProps} className="h-40 sm:h-44" />
+      {canvasBox("h-40 sm:h-44")}
       <div className="mt-2 flex items-center justify-between gap-3">
         <p className="text-[11px] leading-4 text-slate-400">Keep your signature inside the box.</p>
         <div className="flex items-center gap-2">
