@@ -10,8 +10,10 @@ import {
   createQuickBooksReceivePayment,
   deleteQuickBooksPayment,
   findOrCreateQuickBooksPaymentMethod,
+  findQuickBooksInvoiceByDocumentNumber,
   getQuickBooksInvoice,
   getQuickBooksInvoicesByIds,
+  isQuickBooksDuplicateDocumentNumberError,
   quickBooksAppUrl,
   voidQuickBooksInvoice,
 } from "./quickbooksService.js";
@@ -112,6 +114,14 @@ function normalizeIdempotencyKey(value) {
   return String(value || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
 }
 
+function quickBooksInvoiceMatchesDraft(invoice, { customerId, total, allowedOnlineMethods }) {
+  if (!invoice || invoice.isVoided) return false;
+  if (String(invoice.customerId || "") !== String(customerId || "")) return false;
+  if (Math.abs(Number(invoice.totalAmount) - Number(total)) > 0.01) return false;
+  return invoice.allowedOnlineMethods?.card === (allowedOnlineMethods.card !== false)
+    && invoice.allowedOnlineMethods?.bankTransfer === (allowedOnlineMethods.bankTransfer !== false);
+}
+
 export function deriveCaseInvoiceStatus(row) {
   const balance = Number(row.balance);
   const amount = Number(row.amount);
@@ -197,7 +207,7 @@ export async function createInvoiceRecord(agencyId, {
     throw createHttpError(400, "The discount cannot be greater than the invoice total.", "VALIDATION_ERROR");
   }
   const total = money(totalBeforeDiscount - discount);
-  const invoiceNumber = newInvoiceNumber(accountingProvider);
+  let invoiceNumber = newInvoiceNumber(accountingProvider);
   // Freeze the people and formula before the invoice exists, so a later
   // case transfer or plan edit only ever applies to later invoices.
   const incentiveSnapshot = await buildInvoiceIncentiveSnapshot(agencyId, caseId, caseItem.caseType);
@@ -336,27 +346,53 @@ export async function createInvoiceRecord(agencyId, {
     // was empty, not when it was set but no longer valid. Re-sync once and
     // retry before giving up — a scheduled installment stuck retrying the
     // same stale id every 15 minutes would otherwise never invoice.
-    if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
-    const resynced = await syncClientToQuickBooks(agencyId, client.id);
-    if (!resynced?.qbCustomerId) throw error;
-    client = resynced;
-    invoice = await createQuickBooksInvoice(agencyId, {
-      customerId: client.qbCustomerId,
-      itemId: category.qboItemId,
-      description,
-      amount: subtotal,
-      dueDate: dueDate || undefined,
-      invoiceNumber,
-      taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
-      expectedTotal: grandTotal,
-      discountAmount: discount,
-      lines: [
-        { itemId: category.qboItemId, description, amount: subtotal, taxable },
-        ...(surcharge ? [{ itemId: surcharge.category.qboItemId, description: surcharge.category.name, amount: surcharge.amount, taxable: false }] : []),
-      ],
-      allowedOnlineMethods,
-      requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
-    });
+    if (isQuickBooksDuplicateDocumentNumberError(error)) {
+      const providerInvoice = await findQuickBooksInvoiceByDocumentNumber(agencyId, invoiceNumber);
+      if (quickBooksInvoiceMatchesDraft(providerInvoice, { customerId: client.qbCustomerId, total: grandTotal, allowedOnlineMethods })) {
+        invoice = providerInvoice;
+      } else {
+        invoiceNumber = newInvoiceNumber(ACCOUNTING_PROVIDERS.QUICKBOOKS);
+        invoice = await createQuickBooksInvoice(agencyId, {
+          customerId: client.qbCustomerId,
+          itemId: category.qboItemId,
+          description,
+          amount: subtotal,
+          dueDate: dueDate || undefined,
+          invoiceNumber,
+          taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
+          expectedTotal: grandTotal,
+          discountAmount: discount,
+          lines: [
+            { itemId: category.qboItemId, description, amount: subtotal, taxable },
+            ...(surcharge ? [{ itemId: surcharge.category.qboItemId, description: surcharge.category.name, amount: surcharge.amount, taxable: false }] : []),
+          ],
+          allowedOnlineMethods,
+          requestId: operationKey ? `case-invoice-${operationKey}-${invoiceNumber}` : undefined,
+        });
+      }
+    } else {
+      if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
+      const resynced = await syncClientToQuickBooks(agencyId, client.id);
+      if (!resynced?.qbCustomerId) throw error;
+      client = resynced;
+      invoice = await createQuickBooksInvoice(agencyId, {
+        customerId: client.qbCustomerId,
+        itemId: category.qboItemId,
+        description,
+        amount: subtotal,
+        dueDate: dueDate || undefined,
+        invoiceNumber,
+        taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
+        expectedTotal: grandTotal,
+        discountAmount: discount,
+        lines: [
+          { itemId: category.qboItemId, description, amount: subtotal, taxable },
+          ...(surcharge ? [{ itemId: surcharge.category.qboItemId, description: surcharge.category.name, amount: surcharge.amount, taxable: false }] : []),
+        ],
+        allowedOnlineMethods,
+        requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
+      });
+    }
   }
 
   try {
@@ -460,12 +496,13 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
   }
 
   const taxable = Number(existing.taxAmount) > 0;
+  let resolvedInvoiceNumber = existing.invoiceNumber;
   const baseInvoicePayload = {
     itemId: category.qboItemId,
     description: existing.description,
     amount: Number(existing.subtotalAmount),
     dueDate: existing.dueDate ? existing.dueDate.toISOString().slice(0, 10) : undefined,
-    invoiceNumber: existing.invoiceNumber,
+    invoiceNumber: resolvedInvoiceNumber,
     taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
     expectedTotal: grandTotal,
     discountAmount: Number(existing.discountAmount),
@@ -481,19 +518,38 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
   try {
     invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
   } catch (error) {
-    if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
-    const resynced = await syncClientToQuickBooks(agencyId, existing.clientId);
-    if (!resynced?.qbCustomerId) throw error;
-    client = resynced;
-    invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
+    if (isQuickBooksDuplicateDocumentNumberError(error)) {
+      const providerInvoice = await findQuickBooksInvoiceByDocumentNumber(agencyId, existing.invoiceNumber);
+      if (quickBooksInvoiceMatchesDraft(providerInvoice, { customerId: client.qbCustomerId, total: grandTotal, allowedOnlineMethods })) {
+        // The provider create succeeded but the local finalize did not. Adopt
+        // that exact receivable instead of creating a second invoice.
+        invoice = providerInvoice;
+      } else {
+        // A genuinely unrelated QuickBooks invoice owns this number. Rotate
+        // only the still-unfinalized local placeholder and retry once.
+        resolvedInvoiceNumber = newInvoiceNumber(ACCOUNTING_PROVIDERS.QUICKBOOKS);
+        invoice = await createQuickBooksInvoice(agencyId, {
+          ...baseInvoicePayload,
+          invoiceNumber: resolvedInvoiceNumber,
+          customerId: client.qbCustomerId,
+          requestId: `finalize-${existing.id}-${resolvedInvoiceNumber}`,
+        });
+      }
+    } else {
+      if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
+      const resynced = await syncClientToQuickBooks(agencyId, existing.clientId);
+      if (!resynced?.qbCustomerId) throw error;
+      client = resynced;
+      invoice = await createQuickBooksInvoice(agencyId, { ...baseInvoicePayload, customerId: client.qbCustomerId });
+    }
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.caseInvoiceLine.deleteMany({ where: { caseInvoiceId: existing.id } });
+    await tx.caseInvoiceLine.deleteMany({ where: { invoiceId: existing.id } });
     return tx.caseInvoice.update({
       where: { id: existing.id },
       data: {
-        clientId: client.id,
+        invoiceNumber: resolvedInvoiceNumber,
         currency: invoice.currency || agency.defaultCurrency || "CAD",
         taxAmount: money(invoice.totalTax),
         qbInvoiceId: invoice.id,
@@ -533,7 +589,7 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
     clientId: client.id,
     caseId: existing.caseId,
     action: "invoice.payment_method_chosen",
-    details: `${onlineMethod === "card" ? "Credit card" : onlineMethod === "bankTransfer" ? "Bank transfer" : onlineMethod === "interac" ? "Interac e-Transfer" : onlineMethod === "debit" ? "Debit card" : "Other payment method"} selected for invoice ${existing.invoiceNumber} — $${Number(invoice.totalAmount).toFixed(2)} total${isManualMethod ? "; client evidence is awaiting staff confirmation" : ""}`,
+    details: `${onlineMethod === "card" ? "Credit card" : onlineMethod === "bankTransfer" ? "Bank transfer" : onlineMethod === "interac" ? "Interac e-Transfer" : onlineMethod === "debit" ? "Debit card" : "Other payment method"} selected for invoice ${resolvedInvoiceNumber} — $${Number(invoice.totalAmount).toFixed(2)} total${isManualMethod ? "; client evidence is awaiting staff confirmation" : ""}`,
     entityType: "caseInvoice",
     entityId: existing.id,
   });

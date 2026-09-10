@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { isQuickBooksDuplicateDocumentNumberError } from "../src/services/quickbooksService.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
@@ -39,6 +40,10 @@ test("staff-created invoices defer the online payment method to the client", asy
   assert.match(portal, /Submit for confirmation/);
   assert.match(service, /card: false, bankTransfer: false/);
   assert.match(service, /surchargeCategory\.qboItemId/);
+  assert.match(portal, /min-h-\[76px\]/);
+  assert.match(portal, /h-12 w-full/);
+  assert.match(portal, /grid-cols-\[2rem_1fr_auto\]/);
+  assert.match(portal, /Number\(surchargeRates\?\.cardSurchargeRatePercent \|\| 0\)/);
 });
 
 test("client payment evidence is isolated from confirmed payment fields and staff can review it", async () => {
@@ -72,4 +77,26 @@ test("an unfinalized staff invoice can be voided without a QuickBooks invoice", 
     service,
     /invoice\.accountingProvider === ACCOUNTING_PROVIDERS\.QUICKBOOKS && invoice\.status !== "AwaitingPaymentMethod"/,
   );
+});
+
+test("QuickBooks duplicate document numbers are recognized and reconciled before any retry", async () => {
+  const [quickBooksService, invoiceService] = await Promise.all([
+    source("../src/services/quickbooksService.js"),
+    source("../src/services/caseInvoiceService.js"),
+  ]);
+  const duplicate = Object.assign(new Error("Duplicate Document Number Error: You must specify a different number. DocNumber=INV-2026-4442A20A is assigned to TxnType=Invoice with TxnId=396"), { qboFaultCode: "6140" });
+
+  assert.equal(isQuickBooksDuplicateDocumentNumberError(duplicate), true);
+  assert.equal(isQuickBooksDuplicateDocumentNumberError(new Error("Invalid Reference Id")), false);
+  assert.match(quickBooksService, /findQuickBooksInvoiceByDocumentNumber/);
+  assert.match(quickBooksService, /WHERE DocNumber =/);
+  assert.match(invoiceService, /quickBooksInvoiceMatchesDraft/);
+  assert.match(invoiceService, /The provider create succeeded but the local finalize did not/);
+  assert.match(invoiceService, /resolvedInvoiceNumber = newInvoiceNumber/);
+  assert.match(invoiceService, /invoiceNumber: resolvedInvoiceNumber/);
+  assert.match(invoiceService, /caseInvoiceLine\.deleteMany\(\{ where: \{ invoiceId: existing\.id \} \}\)/);
+  assert.doesNotMatch(invoiceService, /caseInvoiceLine\.deleteMany\(\{ where: \{ caseInvoiceId:/);
+  const finalizeStart = invoiceService.indexOf("export async function finalizeAwaitingPaymentMethodInvoice");
+  const finalizeBody = invoiceService.slice(finalizeStart, invoiceService.indexOf("\nexport ", finalizeStart + 1));
+  assert.doesNotMatch(finalizeBody, /data: \{\s*clientId: client\.id,/);
 });

@@ -384,6 +384,11 @@ function mapQuickBooksInvoice(invoice) {
     createdAt: invoice.MetaData?.CreateTime || invoice.TxnDate || null,
     updatedAt: invoice.MetaData?.LastUpdatedTime || null,
     currency: invoice.CurrencyRef?.value || "CAD",
+    customerId: invoice.CustomerRef?.value || null,
+    allowedOnlineMethods: {
+      card: invoice.AllowOnlineCreditCardPayment !== false,
+      bankTransfer: invoice.AllowOnlineACHPayment !== false,
+    },
     isVoided: String(invoice.PrivateNote || "").trim().toLowerCase() === "voided"
       || String(invoice.TxnStatus || "").trim().toLowerCase() === "voided",
     // Only present once the invoice has been sent — QuickBooks Payments
@@ -394,6 +399,26 @@ function mapQuickBooksInvoice(invoice) {
     // populates one immediately). See createQuickBooksInvoice.
     invoiceLink: invoice.InvoiceLink || null,
   };
+}
+
+export function isQuickBooksDuplicateDocumentNumberError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return error?.qboFaultCode === "6140"
+    || message.includes("duplicate document number")
+    || (message.includes("specify a different number") && message.includes("docnumber"));
+}
+
+export async function findQuickBooksInvoiceByDocumentNumber(agencyId, invoiceNumber) {
+  const normalized = String(invoiceNumber || "").trim();
+  if (!normalized) return null;
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: `SELECT Id, DocNumber FROM Invoice WHERE DocNumber = '${escapeQueryLiteral(normalized)}' MAXRESULTS 2`,
+  });
+  const matches = (payload.QueryResponse?.Invoice || [])
+    .filter((invoice) => String(invoice.DocNumber || "").trim() === normalized);
+  if (matches.length !== 1) return null;
+  return getQuickBooksInvoice(agencyId, matches[0].Id);
 }
 
 // Once a QuickBooks company has real sales-tax tracking turned on (its own

@@ -30,5 +30,7 @@ Client sync maps the CaseDesk primary phone to QuickBooks `PrimaryPhone` and the
 ## Failure Implications
 Token or API failure leaves sync-error/retry state and can delay invoice/payment/refund confirmation. Webhook loss is partly covered by polling/reconciliation safety nets; duplicate processing must stay idempotent.
 
+When invoice creation returns a duplicate-document-number fault, CaseDesk queries that exact QuickBooks document number. It reuses a single matching, non-void invoice only after checking customer, total, and hosted-method flags; otherwise it rotates the unfinalized local number and retries once. This reconciles interrupted finalization without duplicating receivables.
+
 ## Environment Variables
 `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`, `QBO_ENVIRONMENT`, `QBO_WEBHOOK_VERIFIER_TOKEN`, `QBO_WEBHOOK_POLL_MS`, `QBO_HOLD_RECONCILE_COOLDOWN_MS`, `MAIL_SETTINGS_ENCRYPTION_KEY`.

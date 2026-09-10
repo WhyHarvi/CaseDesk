@@ -37,6 +37,8 @@ Staff-created QuickBooks invoices begin as local `AwaitingPaymentMethod` records
 
 The client may instead choose Interac e-Transfer, debit, or another offline arrangement. CaseDesk creates the base QuickBooks invoice without a processing fee or hosted payment method and stores the submitted transaction/reference number and optional screenshot separately from confirmed-payment fields. This evidence never changes the balance. Staff must verify receipt and use the existing audited record-payment action; online payments remain automatically matched through QuickBooks.
 
+QuickBooks invoice creation is recoverable when the provider reports that a CaseDesk document number already exists. CaseDesk first reads that provider invoice and adopts it only when the customer, total, payment-method flags, and non-void state match the local draft—covering a provider success followed by an interrupted local response. A genuinely unrelated collision rotates the still-unfinalized local number and retries once; it never creates a second receivable when the existing provider invoice matches.
+
 ## Permissions
 Requires financial capability and Payments page or Billing case tab. Sensitive approvals and configuration add admin/role rules; all records remain agency/case scoped.
 

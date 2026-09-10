@@ -1,42 +1,74 @@
-import { ArrowDownLeft, ArrowUpRight, Banknote, CalendarClock, CheckCircle2, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText, RotateCcw, Smartphone, Upload, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowRight, ArrowUpRight, Banknote, CalendarClock, Check, CheckCircle2, ChevronRight, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText, RotateCcw, Smartphone, Upload, Wallet } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { choosePortalInvoicePaymentMethod, downloadPortalInvoicePdf, getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
-import ClientPortalSkeleton, { GlassCard } from "../../components/client-portal/ClientPortalSkeleton";
+import ClientPortalSkeleton from "../../components/client-portal/ClientPortalSkeleton";
 import ClientPortalEmptyState from "../../components/client-portal/ClientPortalEmptyState";
-import ClientPaymentCard, { formatMoney } from "../../components/client-portal/ClientPaymentCard";
+import { formatMoney } from "../../components/client-portal/ClientPaymentCard";
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
 import { formatPortalDate } from "../../components/client-portal/ClientStatusCard";
 
 const INVOICE_STATUS_LABEL = { Open: "Awaiting payment", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", PartiallyRefunded: "Partially refunded", Overdue: "Overdue", AwaitingPaymentMethod: "Choose payment method" };
 const INVOICE_STATUS_TONE = {
-  Open: "bg-slate-100 text-slate-600",
-  PartiallyPaid: "bg-amber-50 text-amber-700",
-  Paid: "bg-emerald-50 text-emerald-700",
-  Refunded: "bg-violet-50 text-violet-700",
-  PartiallyRefunded: "bg-fuchsia-50 text-fuchsia-700",
-  Overdue: "bg-rose-50 text-rose-700",
-  AwaitingPaymentMethod: "bg-sky-50 text-sky-700",
+  Paid: "border-slate-950 bg-slate-950 text-white",
+  Overdue: "border-[#002FA7] bg-[#002FA7] text-white",
+  AwaitingPaymentMethod: "border-[#002FA7] text-[#002FA7]",
 };
 const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Government fee" };
 
 const PAYMENT_METHOD_ROWS = [
-  { value: "bankTransfer", label: "Bank transfer", copy: "Pay securely through QuickBooks", icon: Wallet, online: true },
-  { value: "card", label: "Credit card", copy: "Visa, Mastercard, or supported card", icon: CreditCard, online: true },
-  { value: "interac", label: "Interac e-Transfer", copy: "Send directly to your agency", icon: Smartphone },
-  { value: "debit", label: "Debit card", copy: "Submit your receipt or transaction number", icon: CreditCard },
-  { value: "other", label: "Other payment method", copy: "Cheque, wire, bank draft, or another arrangement", icon: Landmark },
+  { value: "bankTransfer", label: "Bank transfer", copy: "Continue to secure QuickBooks checkout", icon: Wallet, online: true },
+  { value: "card", label: "Credit card", copy: "Visa, Mastercard, or another supported card", icon: CreditCard, online: true },
+  { value: "interac", label: "Interac e-Transfer", copy: "Send to your agency, then share confirmation", icon: Smartphone },
+  { value: "debit", label: "Debit card", copy: "Share your receipt or transaction number", icon: CreditCard },
+  { value: "other", label: "Other payment method", copy: "Cheque, wire, bank draft, or an arrangement", icon: Landmark },
 ];
 
-function ChoosePaymentMethod({ invoice, surchargeRates, instructions, onChosen }) {
+function Frame({ children, className = "" }) {
+  return <section className={`border border-slate-200 bg-white shadow-none ${className}`}>{children}</section>;
+}
+
+function PaymentSummary({ payment }) {
+  if (!payment) return null;
+  const hasFee = payment.status !== "No Fee Recorded";
+  return (
+    <Frame>
+      <div className="grid grid-cols-[2.75rem_1fr] border-b border-slate-200">
+        <div className="flex items-center justify-center border-r border-slate-200 text-xs font-bold tabular-nums text-[#002FA7]">01</div>
+        <div className="px-4 py-4 sm:px-5">
+          <p className="text-xs font-semibold text-slate-500">Current balance</p>
+          <div className="mt-1 flex flex-wrap items-end justify-between gap-2">
+            <p className="text-[2rem] font-semibold leading-none tracking-[-0.05em] tabular-nums text-slate-950 sm:text-4xl">{hasFee ? formatMoney(payment.balance, payment.currency) : "No fees yet"}</p>
+            <span className="border border-slate-300 px-2 py-1 text-[10px] font-semibold text-slate-600">{payment.status}</span>
+          </div>
+        </div>
+      </div>
+      {hasFee ? (
+        <div className="grid grid-cols-2 divide-x divide-slate-200">
+          <div className="px-4 py-3 sm:px-5"><p className="text-[11px] text-slate-500">Total fees</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-950">{formatMoney(payment.totalFee, payment.currency)}</p></div>
+          <div className="px-4 py-3 sm:px-5"><p className="text-[11px] text-slate-500">Paid so far</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-[#002FA7]">{formatMoney(payment.paidAmount, payment.currency)}</p></div>
+        </div>
+      ) : <p className="px-4 py-4 text-sm leading-6 text-slate-600 sm:px-5">Your agency has not recorded any fees for your file yet.</p>}
+    </Frame>
+  );
+}
+
+function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, onChosen }) {
   const [method, setMethod] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [reference, setReference] = useState("");
   const [screenshot, setScreenshot] = useState(null);
   const [error, setError] = useState("");
   const base = Number(invoice.balance);
-  const cardTotal = base * (1 + (surchargeRates?.cardSurchargeRatePercent ?? 2.4) / 100);
-  const bankTotal = base * (1 + (surchargeRates?.bankTransferFeeRatePercent ?? 1) / 100);
+  const cardTotal = base * (1 + Number(surchargeRates?.cardSurchargeRatePercent || 0) / 100);
+  const bankTotal = base * (1 + Number(surchargeRates?.bankTransferFeeRatePercent || 0) / 100);
+
+  function toggleManual(value) {
+    setMethod((current) => current === value ? null : value);
+    setReference("");
+    setScreenshot(null);
+    setError("");
+  }
 
   async function chooseOnline(value) {
     setMethod(value);
@@ -46,7 +78,7 @@ function ChoosePaymentMethod({ invoice, surchargeRates, instructions, onChosen }
       await choosePortalInvoicePaymentMethod(invoice.id, value);
       await onChosen();
     } catch (reason) {
-      setError(portalErrorMessage(reason, "That couldn't be saved. Please try again."));
+      setError(portalErrorMessage(reason, "That payment method could not be saved. Please try again."));
       setMethod(null);
     } finally {
       setSubmitting(false);
@@ -65,109 +97,89 @@ function ChoosePaymentMethod({ invoice, surchargeRates, instructions, onChosen }
       await choosePortalInvoicePaymentMethod(invoice.id, method, { reference: reference.trim(), screenshot });
       await onChosen();
     } catch (reason) {
-      setError(portalErrorMessage(reason, "Your payment details couldn't be submitted. Please try again."));
+      setError(portalErrorMessage(reason, "Your payment details could not be submitted. Please try again."));
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="mt-3 overflow-hidden border border-slate-200 bg-white">
-      <div className="border-b border-slate-200 px-3.5 py-3">
-        <p className="text-xs font-semibold text-slate-950">Choose payment method</p>
-        <p className="mt-0.5 text-[11px] text-slate-500">Online payments continue immediately. Manual payments are confirmed by your agency.</p>
+    <div className="mt-5 border border-slate-300 bg-white">
+      <div className="border-b border-slate-300 px-4 py-4">
+        <p className="text-base font-semibold tracking-tight text-slate-950">Choose payment method</p>
+        <p className="mt-1 text-xs leading-5 text-slate-600">Online options open checkout. Interac, debit, and other methods are confirmed after you submit proof.</p>
       </div>
-      <div className="divide-y divide-slate-200">
-        {PAYMENT_METHOD_ROWS.map((item) => {
+      <div className="divide-y divide-slate-300">
+        {PAYMENT_METHOD_ROWS.map((item, index) => {
           const Icon = item.icon;
           const total = item.value === "card" ? cardTotal : item.value === "bankTransfer" ? bankTotal : base;
           const selected = method === item.value;
           return (
-            <div key={item.value}>
+            <div key={item.value} className={selected ? "bg-[#F7F7F8]" : "bg-white"}>
               <button
                 type="button"
                 disabled={submitting}
-                onClick={() => item.online ? chooseOnline(item.value) : setMethod(selected ? null : item.value)}
-                className={`grid w-full grid-cols-[32px_1fr_auto] items-center gap-3 border-l-[3px] px-3 py-3 text-left transition ${selected ? "border-l-[#002FA7] bg-blue-50/50" : "border-l-transparent hover:bg-slate-50"}`}
+                aria-pressed={selected}
+                onClick={() => item.online ? chooseOnline(item.value) : toggleManual(item.value)}
+                className="grid min-h-[76px] w-full grid-cols-[2rem_1fr_auto] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-[#F7F7F8] disabled:cursor-wait disabled:opacity-60 sm:grid-cols-[2.5rem_2.5rem_1fr_auto] sm:px-4"
               >
-                <span className="flex h-8 w-8 items-center justify-center bg-slate-100 text-[#002FA7]">{submitting && selected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}</span>
-                <span className="min-w-0"><span className="block text-xs font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-slate-500">{item.copy}</span></span>
-                <span className="text-right"><span className="block text-xs font-semibold tabular-nums text-slate-950">{formatPortalMoney(total)}</span><span className="mt-0.5 block text-[9px] text-slate-400">{item.online && total > base ? "Fee included" : "No added fee"}</span></span>
+                <span className="hidden text-[10px] font-bold tabular-nums text-slate-400 sm:block">{String(index + 1).padStart(2, "0")}</span>
+                <span className={`flex h-8 w-8 items-center justify-center border ${selected ? "border-[#002FA7] bg-[#002FA7] text-white" : "border-slate-300 text-[#002FA7]"}`}>{submitting && selected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}</span>
+                <span className="min-w-0"><span className="block text-sm font-semibold text-slate-950">{item.label}</span><span className="mt-0.5 block text-[11px] leading-4 text-slate-500">{item.copy}</span></span>
+                <span className="flex items-center gap-2 text-right">
+                  <span><span className="block text-sm font-semibold tabular-nums text-slate-950">{formatMoney(total, currency)}</span><span className="mt-0.5 block text-[10px] text-slate-500">{item.online && total > base ? "Fee included" : "No added fee"}</span></span>
+                  {item.online ? <ArrowRight className="hidden h-4 w-4 text-[#002FA7] sm:block" /> : selected ? <Check className="hidden h-4 w-4 text-[#002FA7] sm:block" /> : <ChevronRight className="hidden h-4 w-4 text-slate-400 sm:block" />}
+                </span>
               </button>
               {selected && !item.online ? (
-                <form onSubmit={submitManual} className="border-l-[3px] border-l-[#002FA7] bg-blue-50/50 px-4 pb-4 pl-[47px]">
-                  {item.value === "interac" && instructions ? <p className="mb-2 whitespace-pre-wrap text-[11px] leading-4 text-slate-600">{instructions}</p> : null}
-                  <label className="block text-[11px] font-semibold text-slate-700">{item.value === "interac" ? "Interac confirmation number" : item.value === "other" ? "Payment method or reference" : "Transaction or receipt number"}
-                    <input value={reference} maxLength={160} onChange={(event) => setReference(event.target.value)} placeholder="Enter the number shown on your receipt" className="mt-1.5 h-10 w-full border border-slate-300 bg-white px-3 text-xs outline-none focus:border-[#002FA7]" />
+                <form onSubmit={submitManual} className="border-t border-slate-300 bg-[#F7F7F8] p-4 sm:ml-[4.5rem] sm:border-l sm:px-5">
+                  {item.value === "interac" && instructions ? <div className="mb-4 border-l-2 border-[#002FA7] pl-3"><p className="whitespace-pre-wrap text-xs leading-5 text-slate-700">{instructions}</p></div> : null}
+                  <label className="block text-xs font-semibold text-slate-800">
+                    {item.value === "interac" ? "Interac confirmation number" : item.value === "other" ? "Payment method or reference" : "Transaction or receipt number"}
+                    <input value={reference} maxLength={160} onChange={(event) => setReference(event.target.value)} placeholder="Enter the number shown on your receipt" className="mt-2 h-12 w-full border border-slate-400 bg-white px-3.5 text-sm text-slate-950 outline-none transition focus:border-[#002FA7] focus:ring-2 focus:ring-[#002FA7]/15" />
                   </label>
-                  <div className="my-2 flex items-center gap-2 text-[10px] text-slate-400"><span className="h-px flex-1 bg-slate-200" />or<span className="h-px flex-1 bg-slate-200" /></div>
-                  <label className="flex cursor-pointer items-center gap-2 border border-dashed border-slate-300 bg-white px-3 py-2.5 text-[11px] font-medium text-slate-600 hover:border-[#002FA7]">
-                    <Upload className="h-3.5 w-3.5 text-[#002FA7]" />
-                    <span className="min-w-0 truncate">{screenshot?.name || "Attach payment screenshot (JPG, PNG, or WebP)"}</span>
+                  <div className="my-3 flex items-center gap-3 text-[10px] font-semibold text-slate-400"><span className="h-px flex-1 bg-slate-300" />OR<span className="h-px flex-1 bg-slate-300" /></div>
+                  <label className="flex min-h-12 cursor-pointer items-center gap-3 border border-dashed border-slate-400 bg-white px-3.5 py-3 text-xs font-medium text-slate-700 transition hover:border-[#002FA7]">
+                    <Upload className="h-4 w-4 shrink-0 text-[#002FA7]" /><span className="min-w-0 truncate">{screenshot?.name || "Attach payment screenshot"}</span>
                     <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => setScreenshot(event.target.files?.[0] || null)} />
                   </label>
-                  <button type="submit" disabled={submitting || (!reference.trim() && !screenshot)} className="mt-2.5 inline-flex h-9 items-center gap-1.5 bg-[#002FA7] px-4 text-[11px] font-semibold text-white disabled:opacity-40">{submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Submit for confirmation</button>
+                  <p className="mt-1.5 text-[10px] text-slate-500">JPG, PNG, or WebP · Maximum 5 MB</p>
+                  <button type="submit" disabled={submitting || (!reference.trim() && !screenshot)} className="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 bg-[#002FA7] px-5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Submit for confirmation</button>
                 </form>
               ) : null}
             </div>
           );
         })}
       </div>
-      {error ? <p className="border-t border-rose-100 bg-rose-50 px-3.5 py-2.5 text-[11px] font-medium text-rose-700">{error}</p> : null}
+      {error ? <p role="alert" className="border-t border-rose-300 bg-rose-50 px-4 py-3 text-xs font-medium leading-5 text-rose-700">{error}</p> : null}
     </div>
   );
 }
 
-function formatPortalMoney(value) {
-  return Number(value).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
-}
-
 function InvoiceDownloadButton({ invoice }) {
   const [downloading, setDownloading] = useState(false);
-
   async function download() {
     setDownloading(true);
-    try {
-      await downloadPortalInvoicePdf(invoice.id, `Invoice-${invoice.invoiceNumber || invoice.id.slice(0, 8)}.pdf`);
-    } catch {
-      // silent — the invoice itself is still visible and payable, a failed download is non-blocking
-    } finally {
-      setDownloading(false);
-    }
+    try { await downloadPortalInvoicePdf(invoice.id, `Invoice-${invoice.invoiceNumber || invoice.id.slice(0, 8)}.pdf`); } catch { /* non-blocking */ } finally { setDownloading(false); }
   }
-
-  return (
-    <button
-      type="button"
-      onClick={download}
-      disabled={downloading}
-      aria-label="Download invoice PDF"
-      title="Download PDF"
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-    >
-      {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-    </button>
-  );
+  return <button type="button" onClick={download} disabled={downloading} aria-label="Download invoice PDF" className="flex h-11 w-11 items-center justify-center border border-slate-300 text-slate-600 transition hover:border-[#002FA7] hover:text-[#002FA7] disabled:opacity-50">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>;
 }
 
 function scheduleDueLabel(installment) {
-  if (installment.triggerType === "Stage") return `Due when your case reaches: ${installment.triggerStage}`;
+  if (installment.triggerType === "Stage") return `Due when your case reaches ${installment.triggerStage}`;
   if (installment.triggerDaysAfterSigning === 0) return "Due on signing";
   return `Due ${installment.triggerDaysAfterSigning} day${installment.triggerDaysAfterSigning === 1 ? "" : "s"} after signing`;
 }
 
-const TRANSACTION_STYLE = {
-  Invoice: { icon: ArrowUpRight, tone: "bg-amber-100 text-amber-700", amountTone: "text-slate-900" },
-  Payment: { icon: ArrowDownLeft, tone: "bg-emerald-100 text-emerald-700", amountTone: "text-emerald-700" },
-  Refund: { icon: RotateCcw, tone: "bg-rose-100 text-rose-700", amountTone: "text-rose-700" },
-  Credit: { icon: ArrowDownLeft, tone: "bg-sky-100 text-sky-700", amountTone: "text-sky-700" },
-  Adjustment: { icon: ReceiptText, tone: "bg-slate-100 text-slate-600", amountTone: "text-slate-700" },
-};
-
+const TRANSACTION_ICON = { Invoice: ArrowUpRight, Payment: ArrowDownLeft, Refund: RotateCcw, Credit: ArrowDownLeft, Adjustment: ReceiptText };
 function transactionAmount(item) {
   if (item.type === "Invoice") return { value: item.charge, prefix: "+" };
   if (item.type === "Refund") return { value: item.refund, prefix: "−" };
   return { value: item.paymentOrCredit || item.charge, prefix: "−" };
+}
+
+function SectionHeading({ number, icon: Icon, title, copy }) {
+  return <div className="grid grid-cols-[2.75rem_1fr] border-b border-slate-200"><div className="flex items-center justify-center border-r border-slate-200 text-xs font-bold tabular-nums text-[#002FA7]">{number}</div><div className="flex items-start gap-3 px-4 py-4 sm:px-5"><Icon className="mt-0.5 h-4 w-4 shrink-0 text-[#002FA7]" /><div><h2 className="text-sm font-semibold text-slate-950">{title}</h2>{copy ? <p className="mt-1 text-xs leading-5 text-slate-500">{copy}</p> : null}</div></div></div>;
 }
 
 export default function ClientPortalPayments() {
@@ -175,177 +187,44 @@ export default function ClientPortalPayments() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const load = useCallback(() => getPortalPayments()
-    .then((result) => setData(result))
-    .catch((reason) => setError(portalErrorMessage(reason, "Your payment details could not be loaded.")))
-    .finally(() => setLoading(false)), []);
-
+  const load = useCallback(() => getPortalPayments().then((result) => { setData(result); setError(""); }).catch((reason) => setError(portalErrorMessage(reason, "Your payment details could not be loaded."))).finally(() => setLoading(false)), []);
   useEffect(() => { load(); }, [load]);
-
   if (loading) return <ClientPortalSkeleton rows={3} />;
 
+  const currency = data?.summary?.currency || "CAD";
+  const invoices = [...(data?.invoices || [])].sort((left, right) => Number(right.status === "AwaitingPaymentMethod") - Number(left.status === "AwaitingPaymentMethod"));
+  const scheduled = data?.schedule?.installments?.filter((item) => item.status === "Scheduled") || [];
+
   return (
-    <div className="space-y-4">
-      <ClientPortalHeader
-        title="Payments"
-        subtitle="Your fees, balance, and payment history"
-        client={overview?.client}
-        agency={overview?.agency}
-      />
-
-      {error ? (
-        <ClientPortalEmptyState icon={CircleAlert} title="We couldn't load your payments" copy={error} />
-      ) : (
+    <div className="space-y-4 font-sans">
+      <ClientPortalHeader title="Payments" subtitle="Fees, invoices, and payment history" client={overview?.client} agency={overview?.agency} />
+      {error ? <ClientPortalEmptyState icon={CircleAlert} title="We couldn't load your payments" copy={error} /> : (
         <>
-          <ClientPaymentCard payment={data.summary} />
+          <PaymentSummary payment={data.summary} />
+          {data.syncWarning ? <div className="flex items-start gap-3 border border-amber-300 bg-white px-4 py-3 text-xs leading-5 text-slate-700"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />{data.syncWarning}</div> : null}
 
-          {data.syncWarning ? (
-            <div className="flex items-start gap-2 rounded-2xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-800">
-              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{data.syncWarning}
-            </div>
-          ) : null}
+          {invoices.length ? <Frame><SectionHeading number="02" icon={FileText} title="Invoices" copy="Choose a payment method or review completed invoices." /><div className="divide-y divide-slate-300">{invoices.map((invoice) => (
+            <article key={invoice.id} className="p-4 sm:p-5">
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{INVOICE_TYPE_LABEL[invoice.paymentType] || invoice.paymentType}{invoice.invoiceNumber ? ` · ${invoice.invoiceNumber}` : ""}</p><h3 className="mt-1.5 text-base font-semibold leading-6 text-slate-950">{invoice.description}</h3></div><span className={`shrink-0 border px-2 py-1 text-[10px] font-semibold ${INVOICE_STATUS_TONE[invoice.status] || "border-slate-300 text-slate-600"}`}>{INVOICE_STATUS_LABEL[invoice.status] || invoice.status}</span></div>
+              <div className="mt-4 grid grid-cols-2 border-y border-slate-200 sm:grid-cols-3"><div className="py-3 pr-3"><p className="text-[10px] text-slate-500">Amount</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-950">{formatMoney(invoice.amount, currency)}</p></div><div className="border-l border-slate-200 px-3 py-3"><p className="text-[10px] text-slate-500">Balance due</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-[#002FA7]">{formatMoney(invoice.balance, currency)}</p></div><div className="col-span-2 border-t border-slate-200 py-3 sm:col-span-1 sm:border-l sm:border-t-0 sm:pl-3"><p className="text-[10px] text-slate-500">Due date</p><p className="mt-0.5 text-sm font-semibold text-slate-950">{invoice.dueDate ? formatPortalDate(invoice.dueDate) : "Not specified"}</p></div></div>
+              {Number(invoice.refundedAmount) > 0 ? <p className="mt-3 text-xs font-medium text-slate-700">{formatMoney(invoice.refundedAmount, currency)} refunded</p> : null}
+              {invoice.status === "AwaitingPaymentMethod" ? <ChoosePaymentMethod invoice={invoice} surchargeRates={data.surchargeRates} instructions={data.instructions} currency={currency} onChosen={load} /> : null}
+              {invoice.paymentSubmission ? <div className="mt-4 border-l-2 border-[#002FA7] bg-[#F7F7F8] px-3 py-3"><p className="flex items-center gap-2 text-xs font-semibold text-slate-950"><CheckCircle2 className="h-4 w-4 text-[#002FA7]" />Payment submitted for confirmation</p><p className="mt-1 text-[11px] leading-5 text-slate-600">Your balance updates after your agency confirms the payment.{invoice.paymentSubmission.reference ? ` Reference: ${invoice.paymentSubmission.reference}` : ""}</p></div> : null}
+              {invoice.status !== "AwaitingPaymentMethod" ? <div className="mt-4 flex gap-2">{invoice.payNowUrl ? <a href={invoice.payNowUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 flex-1 items-center justify-center gap-2 bg-[#002FA7] px-4 text-sm font-semibold text-white sm:flex-none"><Wallet className="h-4 w-4" />Pay now</a> : null}<InvoiceDownloadButton invoice={invoice} /></div> : null}
+            </article>
+          ))}</div></Frame> : null}
 
-          {data.schedule?.installments?.some((item) => item.status === "Scheduled") ? (
-            <GlassCard className="p-5">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-fuchsia-100 text-fuchsia-700"><CalendarClock className="h-4 w-4" /></div>
-                <h2 className="text-[15px] font-semibold text-slate-900">Upcoming payments</h2>
-              </div>
-              <p className="mt-2 text-[12px] leading-5 text-slate-500">Your agency's full payment plan for this case. Each item becomes an invoice once it's due.</p>
-              <ul className="mt-3 divide-y divide-slate-100">
-                {data.schedule.installments
-                  .filter((item) => item.status === "Scheduled")
-                  .map((item) => (
-                    <li key={item.id} className="flex items-start justify-between gap-3 py-3.5 first:pt-1 last:pb-1">
-                      <div className="flex min-w-0 items-start gap-2.5">
-                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-                          {item.paymentType === "disbursement" ? <Landmark className="h-3.5 w-3.5" /> : <Banknote className="h-3.5 w-3.5" />}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900">{item.label}</p>
-                          <p className="mt-0.5 text-[12px] text-slate-500">{INVOICE_TYPE_LABEL[item.paymentType] || item.paymentType} · {formatPortalMoney(item.amount)}</p>
-                          <p className="mt-1 text-[11px] text-slate-400">{scheduleDueLabel(item)}</p>
-                        </div>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">Not yet invoiced</span>
-                    </li>
-                  ))}
-              </ul>
-            </GlassCard>
-          ) : null}
+          {scheduled.length ? <Frame><SectionHeading number="03" icon={CalendarClock} title="Upcoming payments" copy="These become invoices when they are due." /><ul className="divide-y divide-slate-200">{scheduled.map((item) => <li key={item.id} className="grid grid-cols-[2rem_1fr_auto] gap-3 px-4 py-4 sm:px-5"><span className="flex h-8 w-8 items-center justify-center border border-slate-300 text-[#002FA7]">{item.paymentType === "disbursement" ? <Landmark className="h-4 w-4" /> : <Banknote className="h-4 w-4" />}</span><div className="min-w-0"><p className="text-sm font-semibold text-slate-950">{item.label}</p><p className="mt-1 text-[11px] leading-4 text-slate-500">{scheduleDueLabel(item)}</p></div><p className="text-sm font-semibold tabular-nums text-slate-950">{formatMoney(item.amount, currency)}</p></li>)}</ul></Frame> : null}
 
-          {data.invoices?.length ? (
-            <GlassCard className="p-5">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700"><FileText className="h-4 w-4" /></div>
-                <h2 className="text-[15px] font-semibold text-slate-900">Invoices</h2>
-              </div>
-              <ul className="mt-4 divide-y divide-slate-100">
-                {data.invoices.map((invoice) => (
-                  <li key={invoice.id} className="flex items-start justify-between gap-3 py-3.5 first:pt-1 last:pb-1">
-                    <div className="flex min-w-0 items-start gap-2.5">
-                      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-                        {invoice.paymentType === "disbursement" ? <Landmark className="h-3.5 w-3.5" /> : <Banknote className="h-3.5 w-3.5" />}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">{invoice.description}</p>
-                        <p className="mt-0.5 text-[12px] text-slate-500">
-                          {INVOICE_TYPE_LABEL[invoice.paymentType] || invoice.paymentType}
-                          {invoice.invoiceNumber ? ` · #${invoice.invoiceNumber}` : ""}
-                        </p>
-                        <p className="mt-1 text-[12px] text-slate-500">
-                          {formatPortalMoney(invoice.amount)} total
-                          {Number(invoice.balance) > 0 ? ` · ${formatPortalMoney(invoice.balance)} due` : ""}
-                        </p>
-                        {Number(invoice.refundedAmount) > 0 ? <p className="mt-1 text-[11px] font-medium text-violet-600">{formatPortalMoney(invoice.refundedAmount)} refunded</p> : null}
-                        {invoice.dueDate ? <p className="mt-1 text-[11px] text-slate-400">Due {formatPortalDate(invoice.dueDate)}</p> : null}
-                        {invoice.payNowUrl ? (
-                          <a
-                            href={invoice.payNowUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-slate-800"
-                          >
-                            <Wallet className="h-3 w-3" /> Pay now
-                          </a>
-                        ) : null}
-                        {invoice.status === "AwaitingPaymentMethod" ? (
-                          <ChoosePaymentMethod invoice={invoice} surchargeRates={data.surchargeRates} instructions={data.instructions} onChosen={load} />
-                        ) : null}
-                        {invoice.paymentSubmission ? (
-                          <div className="mt-2.5 border-l-[3px] border-l-[#002FA7] bg-blue-50 px-3 py-2.5">
-                            <p className="flex items-center gap-1.5 text-[11px] font-semibold text-blue-900"><CheckCircle2 className="h-3.5 w-3.5" /> Payment submitted for confirmation</p>
-                            <p className="mt-1 text-[10px] leading-4 text-blue-800">Your balance will update after your agency confirms the payment.{invoice.paymentSubmission.reference ? ` Reference: ${invoice.paymentSubmission.reference}` : ""}</p>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <span className={["rounded-full px-2.5 py-1 text-[10px] font-semibold", INVOICE_STATUS_TONE[invoice.status] || "bg-slate-100 text-slate-500"].join(" ")}>
-                        {INVOICE_STATUS_LABEL[invoice.status] || invoice.status}
-                      </span>
-                      {invoice.status !== "AwaitingPaymentMethod" ? <InvoiceDownloadButton invoice={invoice} /> : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </GlassCard>
-          ) : null}
+          {data.instructions ? <Frame><SectionHeading number="04" icon={Landmark} title="Payment instructions" /><p className="whitespace-pre-wrap px-4 py-4 text-sm leading-6 text-slate-700 sm:px-5">{data.instructions}</p></Frame> : null}
 
-          {data.instructions ? (
-            <GlassCard className="p-5">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-sky-100 text-sky-700"><Landmark className="h-4 w-4" /></div>
-                <h2 className="text-[15px] font-semibold text-slate-900">How to pay</h2>
-              </div>
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{data.instructions}</p>
-            </GlassCard>
-          ) : null}
+          <Frame><SectionHeading number="05" icon={ReceiptText} title="Payment history" copy="Invoices, payments, credits, and refunds." />{data.transactions?.length ? <ul className="divide-y divide-slate-200">{data.transactions.map((item) => {
+            const Icon = TRANSACTION_ICON[item.type] || ReceiptText;
+            const amount = transactionAmount(item);
+            return <li key={item.id} className="grid grid-cols-[2rem_1fr_auto] gap-3 px-4 py-4 sm:px-5"><span className="flex h-8 w-8 items-center justify-center border border-slate-300 text-[#002FA7]"><Icon className="h-4 w-4" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-x-2"><p className="text-sm font-semibold text-slate-950">{item.type}</p><span className="text-[10px] font-medium text-slate-500">{item.reference}</span></div><p className="mt-0.5 text-xs leading-5 text-slate-600">{item.description}</p><p className="mt-1 text-[10px] text-slate-500">{formatPortalDate(item.date)}{item.caseReference ? ` · ${item.caseReference}` : ""}</p></div><div className="text-right"><p className="text-sm font-semibold tabular-nums text-slate-950">{amount.prefix}{formatMoney(amount.value, currency)}</p><p className="mt-1 text-[10px] tabular-nums text-slate-500">Balance {formatMoney(item.runningBalance, currency)}</p></div></li>;
+          })}</ul> : <p className="px-4 py-5 text-sm leading-6 text-slate-600 sm:px-5">No payments have been recorded yet.</p>}</Frame>
 
-          <GlassCard className="p-5">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-700"><ReceiptText className="h-4 w-4" /></div>
-              <h2 className="text-[15px] font-semibold text-slate-900">Payment history</h2>
-            </div>
-            {data.transactions?.length ? (
-              <ul className="mt-4 divide-y divide-slate-100">
-                {data.transactions.map((item) => {
-                  const style = TRANSACTION_STYLE[item.type] || TRANSACTION_STYLE.Adjustment;
-                  const Icon = style.icon;
-                  const amount = transactionAmount(item);
-                  return (
-                  <li key={item.id} className="flex items-start justify-between gap-3 py-3.5 first:pt-1 last:pb-1">
-                    <div className="flex min-w-0 items-start gap-2.5">
-                      <div className={["mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl", style.tone].join(" ")}><Icon className="h-3.5 w-3.5" /></div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <p className="text-sm font-semibold text-slate-900">{item.type}</p>
-                          <span className="text-[10px] font-medium text-slate-400">{item.reference}</span>
-                        </div>
-                        <p className="mt-0.5 text-[12px] leading-5 text-slate-500">{item.description}</p>
-                        <p className="mt-1 text-[11px] text-slate-400">
-                          {formatPortalDate(item.date)}{item.caseReference ? ` · ${item.caseReference}` : ""}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className={["text-sm font-semibold tabular-nums", style.amountTone].join(" ")}>{amount.prefix}{formatMoney(amount.value, data.summary.currency)}</p>
-                      <p className="mt-1 text-[10px] text-slate-400">Balance {formatMoney(item.runningBalance, data.summary.currency)}</p>
-                    </div>
-                  </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="mt-3 text-sm leading-6 text-slate-500">No payments have been recorded yet. Your history will appear here.</p>
-            )}
-          </GlassCard>
-
-          <p className="flex items-start gap-2 px-2 text-[12px] leading-5 text-slate-400">
-            <CreditCard className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            This account history includes case fees, consultation payments, credits, and refunds. If something looks wrong, contact your agency in Chat.
-          </p>
+          <p className="flex items-start gap-2 px-1 pb-2 text-xs leading-5 text-slate-500"><CreditCard className="mt-0.5 h-4 w-4 shrink-0 text-[#002FA7]" />If something looks wrong, contact your agency in Chat.</p>
         </>
       )}
     </div>
