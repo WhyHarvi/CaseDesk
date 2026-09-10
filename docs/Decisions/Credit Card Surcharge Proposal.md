@@ -128,6 +128,23 @@ it's the only one that discloses each fee to the client *before* they pay
 that prevents a client from paying one method's invoice through the
 other, now that both methods carry a real fee to get right.
 
+### Implemented fallback and offline branch
+
+The client portal also offers the existing fee-free manual methods without
+sending the client through the hosted QuickBooks payment page. Interac
+e-Transfer, debit, and other arrangements create the base QuickBooks invoice
+with both hosted methods disabled; a submitted reference or screenshot is
+unverified evidence only and cannot change the invoice balance. Staff verifies
+receipt and records the payment through the existing audited manual-payment
+workflow.
+
+A configured surcharge rate is effective only while its dedicated QuickBooks
+item is mapped. This prevents older workspaces—which inherited non-zero default
+rates before creating the new items—from being blocked at method selection. In
+that state the portal displays the base total with no added fee and the backend
+creates that same base-total invoice. Mapping the item re-enables the configured
+fee; CaseDesk never displays a fee and then silently omits it.
+
 ## Data model impact (regardless of option chosen)
 
 - **Fee rates**: two new fields —

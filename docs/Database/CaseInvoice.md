@@ -10,7 +10,7 @@ risk: critical
 Durable CaseDesk invoice independent of whether it is mirrored to QuickBooks or a custom/cash ledger.
 
 ## Important Fields
-Tenant/case/client, provider/ledger, agency/client snapshots, invoice numbers, decimal subtotal/discount/tax/amount/balance, status/due/payment data, QuickBooks IDs/token/link, and idempotency keys.
+Tenant/case/client, provider/ledger, agency/client snapshots, invoice numbers, decimal subtotal/discount/tax/amount/balance, status/due/payment data, QuickBooks IDs/token/link, and idempotency keys. `clientPayment*` fields hold unverified offline-payment method, reference, screenshot metadata, and submission time separately from confirmed `lastPayment*` fields.
 
 ## Relationships
 Belongs to [[Agency]], [[Case]], [[Client]], optional ledger/creator; owns lines, installments, approvals, cash allocations, refunds, follow-ups, and incentive records.

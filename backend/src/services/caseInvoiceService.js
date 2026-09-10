@@ -85,9 +85,14 @@ async function resolveOnlineMethodSurcharge(agencyId, { onlineMethod, quickBooks
     // for consistency rather than drawing a distinction not confirmed
     // during the agency's compliance review.
     if (clientProvince !== "QC" && ratePercent > 0) {
-      const surchargeCategory = await requireFeeCategory(agencyId, isCard ? "card-surcharge" : "bank-transfer-fee", { requireMapping: true });
+      const surchargeCategory = await requireFeeCategory(agencyId, isCard ? "card-surcharge" : "bank-transfer-fee");
       const surchargeAmount = money((total * ratePercent) / 100);
-      if (surchargeAmount > 0) surcharge = { category: surchargeCategory, amount: surchargeAmount };
+      // Processing-fee mappings are optional setup. An older workspace may
+      // have a non-zero default rate but no mapped QuickBooks item; that
+      // must not block the client from paying. The portal receives an
+      // effective 0% rate in the same state, so the disclosed total and
+      // provider invoice remain identical.
+      if (surchargeAmount > 0 && surchargeCategory.qboItemId) surcharge = { category: surchargeCategory, amount: surchargeAmount };
     }
   }
   // QuickBooks' own mechanism for restricting which method its hosted "Pay
@@ -97,6 +102,8 @@ async function resolveOnlineMethodSurcharge(agencyId, { onlineMethod, quickBooks
     ? { card: true, bankTransfer: false }
     : onlineMethod === "bankTransfer"
       ? { card: false, bankTransfer: true }
+      : ["interac", "debit", "other"].includes(onlineMethod)
+        ? { card: false, bankTransfer: false }
       : { card: true, bankTransfer: true };
   return { surcharge, allowedOnlineMethods, grandTotal: money(total + (surcharge?.amount || 0)) };
 }
@@ -411,13 +418,18 @@ export async function createInvoiceRecord(agencyId, {
 
 // Completes an AwaitingPaymentMethod invoice (see createInvoiceRecord's
 // deferMethodChoice branch above) once the client has picked how they'll
-// pay — called from the client portal's choose-method endpoint. Adds the
-// surcharge, creates the real QuickBooks invoice restricted to that one
-// method, and turns the placeholder row into a normal invoice in place
-// (same id, same invoice number) rather than creating a second one.
-export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId, onlineMethod, actorUserId }) {
-  if (onlineMethod !== "card" && onlineMethod !== "bankTransfer") {
-    throw createHttpError(400, "paymentMethod must be \"card\" or \"bankTransfer\".", "VALIDATION_ERROR");
+// pay. Hosted choices apply a mapped surcharge and enable only the chosen
+// QuickBooks method. Offline choices create the base invoice with hosted
+// methods disabled and retain unverified evidence separately. Both update
+// the placeholder in place rather than creating another local invoice.
+export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId, onlineMethod, actorUserId, clientSubmission = null }) {
+  const supportedMethods = new Set(["card", "bankTransfer", "interac", "debit", "other"]);
+  if (!supportedMethods.has(onlineMethod)) {
+    throw createHttpError(400, "Choose a supported payment method.", "VALIDATION_ERROR");
+  }
+  const isManualMethod = ["interac", "debit", "other"].includes(onlineMethod);
+  if (isManualMethod && !clientSubmission?.reference && !clientSubmission?.proofStorageKey) {
+    throw createHttpError(400, "Enter a payment reference or attach a payment screenshot.", "PAYMENT_EVIDENCE_REQUIRED");
   }
   const existing = await prisma.caseInvoice.findFirst({
     where: { id: invoiceId, agencyId, status: "AwaitingPaymentMethod" },
@@ -492,6 +504,12 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
         balance: invoice.balance,
         status: deriveCaseInvoiceStatus({ balance: invoice.balance, amount: invoice.totalAmount, dueDate: invoice.dueDate }),
         lastSyncedAt: new Date(),
+        clientPaymentMethod: isManualMethod ? onlineMethod : null,
+        clientPaymentReference: isManualMethod ? clientSubmission?.reference || null : null,
+        clientPaymentProofStorageKey: isManualMethod ? clientSubmission?.proofStorageKey || null : null,
+        clientPaymentProofMimeType: isManualMethod ? clientSubmission?.proofMimeType || null : null,
+        clientPaymentProofFilename: isManualMethod ? clientSubmission?.proofFilename || null : null,
+        clientPaymentSubmittedAt: isManualMethod ? new Date() : null,
         lines: {
           create: [
             { agencyId, feeCategory: existing.paymentType, description: existing.description, unitAmount: Number(existing.subtotalAmount), discount: Number(existing.discountAmount), taxable, taxRate: Number(existing.taxRatePercent), taxAmount: money(invoice.totalTax), lineTotal: Number(existing.amount) },
@@ -515,7 +533,7 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
     clientId: client.id,
     caseId: existing.caseId,
     action: "invoice.payment_method_chosen",
-    details: `${onlineMethod === "card" ? "Credit card" : "Bank transfer"} selected for invoice ${existing.invoiceNumber} — $${Number(invoice.totalAmount).toFixed(2)} total`,
+    details: `${onlineMethod === "card" ? "Credit card" : onlineMethod === "bankTransfer" ? "Bank transfer" : onlineMethod === "interac" ? "Interac e-Transfer" : onlineMethod === "debit" ? "Debit card" : "Other payment method"} selected for invoice ${existing.invoiceNumber} — $${Number(invoice.totalAmount).toFixed(2)} total${isManualMethod ? "; client evidence is awaiting staff confirmation" : ""}`,
     entityType: "caseInvoice",
     entityId: existing.id,
   });

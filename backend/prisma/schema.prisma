@@ -882,6 +882,15 @@ model CaseInvoice {
   lastPaymentReference            String?                       @map("last_payment_reference")
   lastPaymentAt                   DateTime?                     @map("last_payment_at")
   lastQbPaymentId                 String?                       @map("last_qb_payment_id")
+  // Evidence submitted by the client for an offline payment. These fields
+  // are intentionally separate from lastPayment* because a client claim is
+  // never treated as collected money until staff records the real payment.
+  clientPaymentMethod             String?                       @map("client_payment_method")
+  clientPaymentReference          String?                       @map("client_payment_reference")
+  clientPaymentProofStorageKey    String?                       @map("client_payment_proof_storage_key")
+  clientPaymentProofMimeType      String?                       @map("client_payment_proof_mime_type")
+  clientPaymentProofFilename      String?                       @map("client_payment_proof_filename")
+  clientPaymentSubmittedAt        DateTime?                     @map("client_payment_submitted_at")
   creationIdempotencyKey          String?                       @map("creation_idempotency_key")
   lastPaymentIdempotencyKey       String?                       @map("last_payment_idempotency_key")
   createdById                     String?                       @map("created_by_id")

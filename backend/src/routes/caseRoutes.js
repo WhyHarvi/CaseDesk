@@ -67,6 +67,7 @@ import {
   createManualPayment,
   createInvoiceRefund,
   downloadInvoicePdf,
+  downloadInvoicePaymentProof,
   listInvoices,
   voidInvoice,
   voidInvoicePayment,
@@ -236,6 +237,12 @@ router.get(
   requirePortalCaseTab("billing"),
   requirePortalCapability("financialData"),
   asyncHandler(listInvoices),
+);
+router.get(
+  "/:id/invoices/:invoiceId/payment-proof",
+  requirePortalCaseTab("billing"),
+  requirePortalCapability("financialData"),
+  asyncHandler(downloadInvoicePaymentProof),
 );
 router.post(
   "/:id/invoices",

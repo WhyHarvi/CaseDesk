@@ -46,3 +46,15 @@ export async function downloadCaseInvoicePdf(caseId, invoiceId, filename) {
   link.remove();
   URL.revokeObjectURL(url);
 }
+
+export async function downloadCaseInvoicePaymentProof(caseId, invoiceId, filename) {
+  const response = await api.get(`/cases/${caseId}/invoices/${invoiceId}/payment-proof`, { responseType: "blob", timeout: 30000 });
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "payment-proof";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}

@@ -20,6 +20,7 @@ import {
 import { servePortalDocument, uploadPortalDocument } from "../controllers/portalController.js";
 import { getPortalCaseFormRequests, signPortalCaseFormRequest, submitPortalCaseFormRequest } from "../controllers/clientPortalCaseFormController.js";
 import { receiveCompressedCaseDocument } from "../middleware/documentUploadMiddleware.js";
+import { receivePaymentProof } from "../middleware/paymentProofUpload.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { requireRole } from "../middleware/authorization.js";
 import { asyncHandler } from "../utils/http.js";
@@ -35,7 +36,7 @@ router.get("/payments", permit("payments.view_balance", { resource: "allCases" }
 router.get("/appointments", permit("appointments.view", { resource: "allCases" }), asyncHandler(getPortalAppointments));
 router.post("/appointments/booking-session", permit("appointments.book"), rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(createPortalBookingSession));
 router.get("/payments/invoices/:invoiceId/pdf", permit("payments.download_invoices", { resource: "invoice" }), asyncHandler(downloadPortalInvoicePdf));
-router.post("/payments/invoices/:invoiceId/choose-method", permit("payments.make_payment", { resource: "invoice" }), rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(choosePortalInvoicePaymentMethod));
+router.post("/payments/invoices/:invoiceId/choose-method", permit("payments.make_payment", { resource: "invoice" }), rateLimit({ windowMs: 60_000, max: 10 }), receivePaymentProof, asyncHandler(choosePortalInvoicePaymentMethod));
 router.get("/timeline", permit("dashboard.view_activity_timeline", { resource: "allCases" }), asyncHandler(getPortalTimeline));
 router.patch("/profile", permit("case_information.edit_contact", { resource: "allCases" }), rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(updatePortalProfile));
 router.get("/questionnaires", permit("forms.view", { resource: "allCases" }), asyncHandler(getPortalQuestionnaires));

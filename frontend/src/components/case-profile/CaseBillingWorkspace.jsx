@@ -15,7 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
-import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment, requestCaseInvoiceRefund, voidCaseInvoice, voidCaseInvoicePayment } from "../../api/caseInvoiceApi";
+import { createCaseInvoice, downloadCaseInvoicePaymentProof, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment, requestCaseInvoiceRefund, voidCaseInvoice, voidCaseInvoicePayment } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
 import { voidInstallmentInvoice } from "../../api/paymentScheduleApi";
 import ClientManualBillingEntrySheet from "../clients/ClientManualBillingEntrySheet";
@@ -50,9 +50,8 @@ const STATUS_TONE = {
   PartiallyRefunded: "bg-teal-50 text-teal-700",
   Overdue: "bg-rose-50 text-rose-700",
   Void: "bg-zinc-200 text-zinc-700",
-  // A payment-schedule installment invoiced automatically, waiting on the
-  // client to pick bank transfer or card in their portal before the real
-  // QuickBooks invoice exists. See finalizeAwaitingPaymentMethodInvoice.
+  // Waiting on the client to choose a hosted or manual payment method before
+  // the real QuickBooks invoice exists. See finalizeAwaitingPaymentMethodInvoice.
   AwaitingPaymentMethod: "bg-sky-50 text-sky-700",
 };
 
@@ -78,11 +77,12 @@ const ERROR_HINTS = {
 };
 
 function CashPaymentRow({ invoice, onPaid }) {
+  const requestedMethod = invoice.clientPaymentMethod === "interac" ? "ETransfer" : invoice.clientPaymentMethod === "debit" ? "Debit" : "ETransfer";
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(String(Number(invoice.balance)));
   const [note, setNote] = useState("");
-  const [method, setMethod] = useState("Cash");
-  const [transactionReference, setTransactionReference] = useState("");
+  const [method, setMethod] = useState(requestedMethod);
+  const [transactionReference, setTransactionReference] = useState(invoice.clientPaymentReference || "");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [idempotencyKey, setIdempotencyKey] = useState(() => globalThis.crypto?.randomUUID?.() || String(Date.now()));
   const [busy, setBusy] = useState(false);
@@ -91,7 +91,7 @@ function CashPaymentRow({ invoice, onPaid }) {
   async function submit(event) {
     event.preventDefault();
     if (method !== "Cash" && !transactionReference.trim()) {
-      setError("Enter the e-transfer transaction number.");
+      setError("Enter the payment transaction or cheque reference.");
       return;
     }
     setBusy(true);
@@ -115,7 +115,7 @@ function CashPaymentRow({ invoice, onPaid }) {
     return (
       <button
         type="button"
-        onClick={() => { setOpen(true); setAmount(String(Number(invoice.balance))); setIdempotencyKey(globalThis.crypto?.randomUUID?.() || String(Date.now())); }}
+        onClick={() => { setOpen(true); setAmount(String(Number(invoice.balance))); setMethod(requestedMethod); setTransactionReference(invoice.clientPaymentReference || ""); setIdempotencyKey(globalThis.crypto?.randomUUID?.() || String(Date.now())); }}
         className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
       >
         <Banknote className="h-3.5 w-3.5" /> Record payment
@@ -131,14 +131,14 @@ function CashPaymentRow({ invoice, onPaid }) {
       onSubmit={submit}
       className="mt-3 overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5"
     >
-      <div className="mb-3 grid grid-cols-2 gap-2 rounded-xl bg-white p-1 ring-1 ring-slate-200/80">
-        {[["Cash", "Cash"], ["ETransfer", "E-transfer"]].map(([value, label]) => (
-          <button key={value} type="button" onClick={() => { setMethod(value); setError(""); }} className={`h-8 rounded-lg text-xs font-semibold transition ${method === value ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}>{label}</button>
-        ))}
-      </div>
+      <label className="mb-2.5 block text-xs font-medium text-slate-600">Payment method
+        <select value={method} onChange={(event) => { setMethod(event.target.value); setError(""); }} className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400">
+          {[["Cash", "Cash"], ["ETransfer", "Interac e-Transfer"], ["Debit", "Debit card"], ["Cheque", "Cheque"], ["Wire", "Wire transfer"], ["BankDraft", "Bank draft"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
       {method !== "Cash" ? (
-        <label className="mb-2.5 block text-xs font-medium text-slate-600">Transaction number
-          <input required maxLength={100} value={transactionReference} onChange={(event) => setTransactionReference(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="Enter the bank transaction number" />
+        <label className="mb-2.5 block text-xs font-medium text-slate-600">{method === "Cheque" ? "Cheque reference" : "Transaction number"}
+          <input required maxLength={100} value={transactionReference} onChange={(event) => setTransactionReference(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="Enter the payment reference" />
         </label>
       ) : (
         <label className="mb-2.5 block text-xs font-medium text-slate-600">Receipt / reference (optional)
@@ -184,6 +184,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
   const payable = canRecordPayment && Number(invoice.balance) > 0 && invoice.status !== "AwaitingPaymentMethod";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [proofDownloading, setProofDownloading] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundAmount, setRefundAmount] = useState("");
@@ -220,6 +221,18 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
       window.setTimeout(() => setLinkCopied(false), 2000);
     } catch {
       setDownloadError("Could not copy the pay link.");
+    }
+  }
+
+  async function downloadPaymentProof() {
+    setProofDownloading(true);
+    setDownloadError("");
+    try {
+      await downloadCaseInvoicePaymentProof(invoice.caseId, invoice.id, invoice.clientPaymentProofFilename || "payment-proof");
+    } catch (reason) {
+      setDownloadError(reason.response?.data?.message || "The payment screenshot could not be downloaded.");
+    } finally {
+      setProofDownloading(false);
     }
   }
 
@@ -351,8 +364,16 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
 
       {invoice.status === "AwaitingPaymentMethod" ? (
         <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
-          This is the base amount. The final QuickBooks invoice will be created after the client chooses credit card or bank transfer in the portal.
+          This is the base amount. The final QuickBooks invoice will be created after the client chooses a payment method in the portal.
         </p>
+      ) : null}
+
+      {invoice.clientPaymentSubmittedAt && Number(invoice.balance) > 0 ? (
+        <div className="mt-2 border-l-[3px] border-l-[#002FA7] bg-blue-50 px-3 py-2.5 text-xs text-blue-900">
+          <p className="font-semibold">Client submitted {invoice.clientPaymentMethod === "interac" ? "an Interac e-Transfer" : invoice.clientPaymentMethod === "debit" ? "a debit payment" : "payment details"} for confirmation</p>
+          <p className="mt-1 leading-5">{invoice.clientPaymentReference ? `Reference: ${invoice.clientPaymentReference}. ` : ""}Confirm the funds were received before recording this payment.</p>
+          {invoice.clientPaymentProofStorageKey ? <button type="button" onClick={downloadPaymentProof} disabled={proofDownloading} className="mt-1.5 inline-flex items-center gap-1 font-semibold text-[#002FA7] underline underline-offset-2 disabled:opacity-50">{proofDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Download screenshot</button> : null}
+        </div>
       ) : null}
 
       {downloadError ? <p className="mt-2 text-xs text-rose-600">{downloadError}</p> : null}

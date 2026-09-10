@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { ACCOUNTING_PROVIDERS, createCaseInvoice, describeInvoiceRefundRequest, getCaseInvoicePdf, listCaseInvoices, recordCashPayment, recordManualPayment, requestCaseInvoiceRefund, voidPaidCaseInvoicePayment, voidUnpaidCaseInvoice } from "../services/caseInvoiceService.js";
 import { approvePaymentApproval, submitPaymentApproval } from "../services/paymentApprovalService.js";
+import { requireDocumentFile } from "../services/documentStorage.js";
+import prisma from "../services/prisma/client.js";
+import { createHttpError } from "../utils/http.js";
 
 export async function listInvoices(req, res) {
   const data = await listCaseInvoices(req.auth.agencyId, req.params.id);
@@ -16,9 +19,9 @@ export async function createInvoice(req, res) {
     discountAmount: req.body?.discountAmount,
     dueDate: req.body?.dueDate,
     actorUserId: req.auth.userId,
-    // Staff creates the base charge only. The client chooses card or bank
-    // transfer in the portal; that choice creates the real QuickBooks
-    // invoice with the matching fee and only that payment method enabled.
+    // Staff creates the base charge only. The client's portal choice creates
+    // the real QuickBooks invoice; hosted methods may add their mapped fee,
+    // while manual methods remain fee-free and await staff confirmation.
     deferMethodChoice: true,
   });
   res.status(201).json({ data });
@@ -27,6 +30,22 @@ export async function createInvoice(req, res) {
 export async function downloadInvoicePdf(req, res) {
   const { buffer, filename } = await getCaseInvoicePdf(req.auth.agencyId, { caseId: req.params.id, invoiceId: req.params.invoiceId });
   res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Length", buffer.length);
+  res.send(buffer);
+}
+
+export async function downloadInvoicePaymentProof(req, res) {
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: req.params.invoiceId, caseId: req.params.id, agencyId: req.auth.agencyId },
+    select: { clientPaymentProofStorageKey: true, clientPaymentProofMimeType: true, clientPaymentProofFilename: true },
+  });
+  if (!invoice?.clientPaymentProofStorageKey) {
+    throw createHttpError(404, "No client payment screenshot is attached to this invoice.", "PAYMENT_PROOF_NOT_FOUND");
+  }
+  const buffer = await requireDocumentFile(invoice.clientPaymentProofStorageKey);
+  const filename = String(invoice.clientPaymentProofFilename || "payment-proof.jpg").replace(/["\r\n]/g, "");
+  res.setHeader("Content-Type", invoice.clientPaymentProofMimeType || "application/octet-stream");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("Content-Length", buffer.length);
   res.send(buffer);

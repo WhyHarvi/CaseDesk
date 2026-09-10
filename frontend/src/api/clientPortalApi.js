@@ -49,11 +49,17 @@ export function getPortalTimeline() {
   return api.get("/client-portal/timeline").then((response) => response.data.data);
 }
 
-// "method" is "card" | "bankTransfer" — see docs/Decisions/Credit Card
-// Surcharge Proposal.md. Valid for any invoice currently
-// AwaitingPaymentMethod, whether staff created it or a schedule fired it.
-export function choosePortalInvoicePaymentMethod(invoiceId, method) {
-  return api.post(`/client-portal/payments/invoices/${invoiceId}/choose-method`, { method }).then((response) => response.data);
+// Online methods finalize directly. Manual methods may carry a reference,
+// screenshot, or both and remain pending until staff records the payment.
+export function choosePortalInvoicePaymentMethod(invoiceId, method, { reference = "", screenshot = null } = {}) {
+  if (!screenshot) {
+    return api.post(`/client-portal/payments/invoices/${invoiceId}/choose-method`, { method, reference }).then((response) => response.data);
+  }
+  const data = new FormData();
+  data.append("method", method);
+  if (reference) data.append("reference", reference);
+  data.append("screenshot", screenshot);
+  return api.post(`/client-portal/payments/invoices/${invoiceId}/choose-method`, data, { timeout: 60_000 }).then((response) => response.data);
 }
 
 export function updatePortalProfile(changes) {

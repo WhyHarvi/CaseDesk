@@ -556,7 +556,7 @@ export async function getPortalPayments(req, res) {
     }),
     prisma.agencyQuickBooksSettings.findUnique({
       where: { agencyId: req.auth.agencyId },
-      select: { cardSurchargeRatePercent: true, bankTransferFeeRatePercent: true },
+      select: { cardSurchargeRatePercent: true, bankTransferFeeRatePercent: true, cardSurchargeItemId: true, bankTransferFeeItemId: true },
     }),
   ]);
   const currency = agency?.defaultCurrency || "CAD";
@@ -586,8 +586,8 @@ export async function getPortalPayments(req, res) {
       // and docs/Decisions/Credit Card Surcharge Proposal.md.
       surchargeRates: quickBooksSettings
         ? {
-            cardSurchargeRatePercent: Number(quickBooksSettings.cardSurchargeRatePercent),
-            bankTransferFeeRatePercent: Number(quickBooksSettings.bankTransferFeeRatePercent),
+            cardSurchargeRatePercent: quickBooksSettings.cardSurchargeItemId ? Number(quickBooksSettings.cardSurchargeRatePercent) : 0,
+            bankTransferFeeRatePercent: quickBooksSettings.bankTransferFeeItemId ? Number(quickBooksSettings.bankTransferFeeRatePercent) : 0,
           }
         : null,
       syncWarning: ledger.syncWarning,
@@ -631,7 +631,15 @@ export async function getPortalPayments(req, res) {
         refundedAmount: money((invoice.refunds || []).filter((refund) => refund.status === "Completed").reduce((sum, refund) => sum + Number(refund.amount), 0)),
         dueDate: invoice.dueDate,
         createdAt: invoice.createdAt,
-        payNowUrl: Number(invoice.balance) > 0 ? invoice.qbInvoiceLink || null : null,
+        payNowUrl: Number(invoice.balance) > 0 && !invoice.clientPaymentSubmittedAt ? invoice.qbInvoiceLink || null : null,
+        paymentSubmission: invoice.clientPaymentSubmittedAt && Number(invoice.balance) > 0 && !invoice.lastPaymentAt
+          ? {
+              method: invoice.clientPaymentMethod,
+              reference: invoice.clientPaymentReference,
+              hasScreenshot: Boolean(invoice.clientPaymentProofStorageKey),
+              submittedAt: invoice.clientPaymentSubmittedAt,
+            }
+          : null,
       })),
       // This is the same unified account ledger used by the staff billing
       // view. It includes case fees, consultations, cash/e-transfer records,
@@ -768,12 +776,10 @@ export async function downloadPortalInvoicePdf(req, res) {
   res.send(buffer);
 }
 
-// The client's own step in the credit-card/bank-transfer surcharge flow.
-// Staff-created invoices and automatically fired installments both land in
-// AwaitingPaymentMethod until the client picks. Ownership is checked here
-// (clientId must match this portal session) before handing off to
-// finalizeAwaitingPaymentMethodInvoice, which re-checks status and does the
-// actual QuickBooks work. See
+// The client's own payment-method step. Staff-created invoices and
+// automatically fired installments both land in AwaitingPaymentMethod until
+// the client picks. Ownership is checked here before the hosted-payment or
+// unverified offline-evidence path performs any QuickBooks/storage work. See
 // docs/Decisions/Credit Card Surcharge Proposal.md.
 export async function choosePortalInvoicePaymentMethod(req, res) {
   const link = await linkedClient(req);
@@ -783,12 +789,31 @@ export async function choosePortalInvoicePaymentMethod(req, res) {
   });
   if (!invoice) throw createHttpError(404, "This invoice is not awaiting a payment method choice.", "NOT_FOUND");
   const method = String(req.body?.method || "").trim();
-  const data = await finalizeAwaitingPaymentMethodInvoice(req.auth.agencyId, {
-    invoiceId: invoice.id,
-    onlineMethod: method,
-    actorUserId: req.auth.userId,
-  });
-  res.json({ success: true, data });
+  const reference = String(req.body?.reference || "").trim().slice(0, 160) || null;
+  const acceptsEvidence = ["interac", "debit", "other"].includes(method);
+  let proofStorageKey = null;
+  if (acceptsEvidence && req.file?.buffer?.length) {
+    const extension = req.file.mimetype === "image/png" ? "png" : req.file.mimetype === "image/webp" ? "webp" : "jpg";
+    proofStorageKey = path.posix.join(req.auth.agencyId, invoice.id, "payment-evidence", `${randomUUID()}.${extension}`);
+    await writeDocumentFile(proofStorageKey, req.file.buffer, req.file.mimetype);
+  }
+  try {
+    const data = await finalizeAwaitingPaymentMethodInvoice(req.auth.agencyId, {
+      invoiceId: invoice.id,
+      onlineMethod: method,
+      actorUserId: req.auth.userId,
+      clientSubmission: {
+        reference,
+        proofStorageKey,
+        proofMimeType: req.file?.mimetype || null,
+        proofFilename: String(req.file?.originalname || "").trim().slice(0, 200) || null,
+      },
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    if (proofStorageKey) await removeDocumentFile(proofStorageKey).catch(() => {});
+    throw error;
+  }
 }
 
 export async function getPortalTimeline(req, res) {

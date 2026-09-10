@@ -34,6 +34,8 @@ Portal routes in `frontend/src/routes/AppRoutes.jsx`, pages under `frontend/src/
 ## Business Rules
 A [[ClientUser]] links the app identity to one agency client. New client accounts are activated through a signed seven-day onboarding link. Loading that link is non-consuming so email-security scanners cannot invalidate it; submitting the password verifies the signed user/auth-identity binding, active client membership, tenant state, and then activates the account once. Default, client-level, and case-level policies resolve to an effective allow/deny; suspension overrides actions. Resource IDs are resolved to a case before policy checks. A sentinel represents case-less general chat.
 
+For an invoice awaiting a method, clients choose from full-width payment rows. Credit card and QuickBooks bank transfer continue to the hosted provider flow. Interac e-Transfer, debit, and other offline methods require a reference number or image proof and remain unconfirmed until staff verifies and records the payment. Client-submitted evidence cannot update an invoice balance.
+
 ## Permissions
 Client role, tenant link, record ownership, area policy, and resource policy all apply. Staff portal-management requires the `manageClientPortal` capability.
 

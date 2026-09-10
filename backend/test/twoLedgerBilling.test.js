@@ -92,7 +92,7 @@ test("custom ledgers own only newly-posted transactions and never reclassify his
   assert.match(invoiceService, /customLedgerId: invoice\.customLedgerId \|\| null/);
 });
 
-test("staff payment selectors expose only card, e-transfer and cash while legacy methods remain backend-compatible", async () => {
+test("appointment selectors stay focused while invoice confirmation supports every manual method", async () => {
   const [calendar, clientEntry, caseBilling, booking, holdService] = await Promise.all([
     read("../frontend/src/pages/CalendarPage.jsx"),
     read("../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx"),
@@ -100,11 +100,16 @@ test("staff payment selectors expose only card, e-transfer and cash while legacy
     read("src/controllers/bookingController.js"),
     read("src/services/bookingPaymentHoldService.js"),
   ]);
-  const selectorSource = `${calendar}\n${clientEntry}\n${caseBilling}`;
+  const appointmentSelectorSource = `${calendar}\n${clientEntry}`;
   assert.match(calendar, /\[\["Card", "Card"\], \["ETransfer", "E-transfer"\], \["Cash", "Cash"\]/);
   assert.match(calendar, /Collect consultation payment/);
   assert.match(clientEntry, /PAYMENT_METHODS = \[\["ETransfer", "E-transfer"\], \["Cash", "Cash"\]\]/);
-  assert.doesNotMatch(selectorSource, /\["Cheque",|\["Wire",|\["Debit",|\["BankDraft",/);
+  assert.doesNotMatch(appointmentSelectorSource, /\["Cheque",|\["Wire",|\["Debit",|\["BankDraft",/);
+  assert.match(caseBilling, /\["ETransfer", "Interac e-Transfer"\]/);
+  assert.match(caseBilling, /\["Debit", "Debit card"\]/);
+  assert.match(caseBilling, /\["Cheque", "Cheque"\]/);
+  assert.match(caseBilling, /\["Wire", "Wire transfer"\]/);
+  assert.match(caseBilling, /\["BankDraft", "Bank draft"\]/);
   assert.match(booking, /"Cheque", "Wire", "Debit", "BankDraft"/);
   assert.match(holdService, /Cheque: "Cheque"[\s\S]*Wire: "Wire transfer"[\s\S]*Debit: "Debit"[\s\S]*BankDraft: "Bank draft"/);
 });
