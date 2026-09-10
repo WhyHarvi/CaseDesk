@@ -95,6 +95,55 @@ test("uses exact QuickBooks payment allocations without duplicating the cached i
   assert.equal(result.transactions.find((entry) => entry.type === "Payment").reference, "QBP-43");
 });
 
+test("deduplicates an interrupted QuickBooks invoice by its exact document number", () => {
+  const result = buildUnifiedClientLedger({
+    caseInvoices: [{
+      id: "case-invoice-interrupted", caseId: "case-1", invoiceNumber: "INV-2026-4442A20A",
+      qbInvoiceId: null, qbInvoiceNumber: null, accountingProvider: "QuickBooks",
+      description: "initial payment", amount: 565, balance: 565, status: "AwaitingPaymentMethod",
+      createdAt: new Date("2026-09-10T18:36:16Z"), updatedAt: new Date("2026-09-10T18:36:16Z"),
+    }],
+    quickBooksInvoices: [{
+      id: "396", docNumber: "INV-2026-4442A20A", totalAmount: 565, balance: 565,
+      createdAt: new Date("2026-09-10T18:36:18Z"), currency: "CAD",
+    }],
+  }, { caseReferences: { "case-1": "Study Permit" } });
+
+  assert.equal(result.summary.totalCharges, 565);
+  assert.equal(result.summary.closingBalance, 565);
+  assert.equal(result.transactions.filter((entry) => entry.type === "Invoice").length, 1);
+  assert.equal(result.transactions[0].reference, "INV-2026-4442A20A");
+  assert.equal(result.transactions[0].source, "case_invoice");
+});
+
+test("does not add a second INV prefix to a QuickBooks document number", () => {
+  const result = buildUnifiedClientLedger({
+    quickBooksInvoices: [{
+      id: "396", docNumber: "INV-2026-4442A20A", totalAmount: 565, balance: 565,
+      createdAt: new Date("2026-09-10T18:36:18Z"), currency: "CAD",
+    }],
+  });
+
+  assert.equal(result.transactions[0].reference, "INV-2026-4442A20A");
+});
+
+test("does not hide an unrelated QuickBooks invoice with a colliding document number", () => {
+  const result = buildUnifiedClientLedger({
+    caseInvoices: [{
+      id: "case-invoice-collision", invoiceNumber: "INV-2026-COLLISION",
+      qbInvoiceId: null, accountingProvider: "QuickBooks", description: "Professional fees",
+      amount: 565, balance: 565, status: "AwaitingPaymentMethod", createdAt: new Date("2026-09-10T18:36:16Z"),
+    }],
+    quickBooksInvoices: [{
+      id: "397", docNumber: "INV-2026-COLLISION", totalAmount: 250, balance: 250,
+      createdAt: new Date("2026-09-10T18:36:18Z"), currency: "CAD", isVoided: false,
+    }],
+  });
+
+  assert.equal(result.summary.totalCharges, 815);
+  assert.equal(result.transactions.filter((entry) => entry.type === "Invoice").length, 2);
+});
+
 test("shows the entered e-transfer number for an ordinary case invoice payment", () => {
   const result = buildUnifiedClientLedger({
     caseInvoices: [{

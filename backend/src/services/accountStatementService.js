@@ -112,7 +112,13 @@ function finalizeLedger(entries, { from = null, to = null } = {}) {
 }
 
 function invoiceReference(number, fallback) {
-  return number ? `INV-${number}` : `INV-${String(fallback).replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+  const normalized = String(number || "").trim();
+  if (normalized) return /^(?:INV|CSH|LEGACY)-/i.test(normalized) ? normalized : `INV-${normalized}`;
+  return `INV-${String(fallback).replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+
+function normalizedInvoiceDocumentNumber(value) {
+  return String(value || "").trim().toUpperCase() || null;
 }
 
 function addInvoiceLifecycle(entries, item) {
@@ -147,6 +153,7 @@ export function buildUnifiedClientLedger({
 }, { from = null, to = null, caseReferences = {}, includeUnmatchedQuickBooks = true } = {}) {
   const entries = [];
   const invoiceMeta = new Map();
+  const quickBooksDocumentMeta = new Map();
 
   for (const row of caseInvoices) {
     const item = {
@@ -167,6 +174,10 @@ export function buildUnifiedClientLedger({
     };
     addInvoiceLifecycle(entries, item);
     if (row.qbInvoiceId) invoiceMeta.set(String(row.qbInvoiceId), item);
+    if (row.accountingProvider === "QuickBooks") {
+      const documentNumber = normalizedInvoiceDocumentNumber(row.qbInvoiceNumber || row.invoiceNumber);
+      if (documentNumber) quickBooksDocumentMeta.set(documentNumber, item);
+    }
     else if (row.accountingProvider === "CaseDeskCash" && item.expectedPaidCents > 0) {
       entries.push({
         id: `${item.key}-cash-payment`, sourceId: item.id, source: "casedesk_cash",
@@ -196,11 +207,24 @@ export function buildUnifiedClientLedger({
     };
     addInvoiceLifecycle(entries, item);
     if (row.qbInvoiceId) invoiceMeta.set(String(row.qbInvoiceId), item);
+    const documentNumber = normalizedInvoiceDocumentNumber(row.qbInvoiceNumber);
+    if (documentNumber) quickBooksDocumentMeta.set(documentNumber, item);
   }
 
   if (includeUnmatchedQuickBooks) {
     for (const row of quickBooksInvoices) {
       if (invoiceMeta.has(String(row.id))) continue;
+      const documentNumber = normalizedInvoiceDocumentNumber(row.docNumber);
+      const documentMatch = documentNumber ? quickBooksDocumentMeta.get(documentNumber) : null;
+      if (documentMatch
+        && cents(documentMatch.amount) === cents(row.totalAmount)
+        && documentMatch.voided === Boolean(row.isVoided)) {
+        // QuickBooks creation can succeed before CaseDesk persists qbInvoiceId.
+        // Treat an exact document-number, total, and state match as the
+        // recovery identity so the receivable and its payments appear once.
+        invoiceMeta.set(String(row.id), documentMatch);
+        continue;
+      }
       const item = {
         key: `qbo-invoice:${row.id}`, id: row.id, source: "quickbooks",
         amount: row.totalAmount, createdAt: row.createdAt || row.transactionDate, updatedAt: row.updatedAt,
@@ -212,6 +236,7 @@ export function buildUnifiedClientLedger({
       };
       addInvoiceLifecycle(entries, item);
       invoiceMeta.set(String(row.id), item);
+      if (documentNumber) quickBooksDocumentMeta.set(documentNumber, item);
     }
   }
 

@@ -39,6 +39,8 @@ The client may instead choose Interac e-Transfer, debit, or another offline arra
 
 QuickBooks invoice creation is recoverable when the provider reports that a CaseDesk document number already exists. CaseDesk first reads that provider invoice and adopts it only when the customer, total, payment-method flags, and non-void state match the local draft—covering a provider success followed by an interrupted local response. A genuinely unrelated collision rotates the still-unfinalized local number and retries once; it never creates a second receivable when the existing provider invoice matches.
 
+The unified client ledger identifies a QuickBooks receivable by provider transaction ID and, during an interrupted finalization before that ID is saved locally, by the exact QuickBooks document number, total, client, and void state. The local CaseDesk entry remains the displayed source and the matching provider entry supplies payment allocations without adding a second charge. A number collision with a different total or state remains visible for investigation. Already-prefixed document numbers are displayed unchanged.
+
 ## Permissions
 Requires financial capability and Payments page or Billing case tab. Sensitive approvals and configuration add admin/role rules; all records remain agency/case scoped.
 
