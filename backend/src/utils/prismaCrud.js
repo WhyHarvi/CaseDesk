@@ -166,6 +166,28 @@ export async function recordActivity({
         console.error("Failed to create activity notification", error);
       }
     }
+    // ActivityLog is the durable evidence boundary for hybrid workflow
+    // automation. The import stays lazy because workflowService itself uses
+    // recordActivity for the resulting audit row; auto-completion actions do
+    // not map to another event, so the loop terminates immediately.
+    if (caseId) {
+      try {
+        const { evaluateWorkflowStepEventTriggers, workflowEventForActivityAction } = await import("../services/workflowService.js");
+        const workflowEvent = workflowEventForActivityAction(action);
+        if (workflowEvent) {
+          await evaluateWorkflowStepEventTriggers(agencyId, caseId, workflowEvent, {
+            actorUserId: userId,
+            clientId: resolvedClientId,
+            occurredAt: activity.createdAt,
+            sourceAction: action,
+          });
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV !== "test") {
+          console.error("Failed to evaluate workflow automation", error);
+        }
+      }
+    }
     return activity;
   } catch (error) {
     if (process.env.NODE_ENV !== "test") {

@@ -6,7 +6,21 @@ import { getWorkflowPriorityStyles } from "../case-profile/caseProfileUtils";
 import { caseStagesForType } from "../../constants/caseStages";
 import Select from "../ui/Select";
 
-const emptyStep = () => ({ localId: Math.random().toString(36).slice(2), title: "", description: "", priority: "Normal", autoCompleteTrigger: null, autoCompleteStage: null });
+const WORKFLOW_EVENTS = [
+  ["RetainerSigned", "Retainer is signed"],
+  ["PaymentConfirmed", "Payment is confirmed"],
+  ["RetainerAndPaymentConfirmed", "Retainer is signed and payment is confirmed"],
+  ["QuestionnaireSubmitted", "Questionnaire is submitted"],
+  ["FormSigned", "A case form is signed"],
+  ["FormFinalized", "A case form is finalized"],
+  ["DocumentFinalized", "A client document is finalized"],
+  ["ApplicationSubmitted", "Application is submitted"],
+  ["DecisionRecorded", "Decision is recorded"],
+  ["CaseClosed", "Case is closed"],
+];
+const workflowEventLabel = (value) => WORKFLOW_EVENTS.find(([key]) => key === value)?.[1] || value;
+
+const emptyStep = () => ({ localId: Math.random().toString(36).slice(2), title: "", description: "", priority: "Normal", autoCompleteTrigger: null, autoCompleteStage: null, autoCompleteEvent: null });
 
 const emptyForm = { name: "", caseType: "", description: "" };
 
@@ -26,6 +40,7 @@ function stepsFromTemplate(template) {
     priority: step.priority || "Normal",
     autoCompleteTrigger: step.autoCompleteTrigger || null,
     autoCompleteStage: step.autoCompleteStage || null,
+    autoCompleteEvent: step.autoCompleteEvent || null,
   }));
 }
 
@@ -134,37 +149,55 @@ function TemplateEditor({ title, subtitle, form, steps, saving, error, onFormCha
                   placeholder="Optional consultant note for this milestone"
                 />
 
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={step.autoCompleteTrigger === "Stage"}
-                      onChange={(event) =>
-                        onUpdateStep(index, event.target.checked
-                          ? { autoCompleteTrigger: "Stage", autoCompleteStage: caseStagesForType(form.caseType)[0] || null }
-                          : { autoCompleteTrigger: null, autoCompleteStage: null })
-                      }
-                      className="h-4 w-4 rounded accent-emerald-600"
-                    />
-                    <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
-                    Auto-complete
+                <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    <Sparkles className="h-3.5 w-3.5 text-blue-700" />
+                    Completion rule
                   </label>
+                  <Select
+                    value={step.autoCompleteTrigger || "Manual"}
+                    onChange={(event) => {
+                      const trigger = event.target.value;
+                      if (trigger === "Stage") {
+                        onUpdateStep(index, { autoCompleteTrigger: "Stage", autoCompleteStage: caseStagesForType(form.caseType)[0] || null, autoCompleteEvent: null });
+                      } else if (trigger === "Event") {
+                        onUpdateStep(index, { autoCompleteTrigger: "Event", autoCompleteStage: null, autoCompleteEvent: WORKFLOW_EVENTS[0][0] });
+                      } else {
+                        onUpdateStep(index, { autoCompleteTrigger: null, autoCompleteStage: null, autoCompleteEvent: null });
+                      }
+                    }}
+                    selectClassName="w-full text-xs"
+                  >
+                    <option value="Manual">Manual</option>
+                    <option value="Stage">At case stage</option>
+                    <option value="Event">After verified event</option>
+                  </Select>
                   {step.autoCompleteTrigger === "Stage" ? (
-                    <label className="flex items-center gap-2 text-xs text-slate-500">
-                      when the case reaches
+                    <label className="grid gap-2 text-xs text-slate-500 sm:col-start-2 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
+                      <span>Complete when the case reaches</span>
                       <Select
                         value={step.autoCompleteStage || ""}
                         onChange={(event) => onUpdateStep(index, { autoCompleteStage: event.target.value })}
-                        className="shrink-0"
-                        selectClassName="text-xs"
+                        selectClassName="w-full text-xs"
                       >
                         {caseStagesForType(form.caseType).map((stage) => (
                           <option key={stage} value={stage}>{stage}</option>
                         ))}
                       </Select>
                     </label>
+                  ) : step.autoCompleteTrigger === "Event" ? (
+                    <label className="grid gap-2 text-xs text-slate-500 sm:col-start-2 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
+                      <span>Complete after</span>
+                      <Select
+                        value={step.autoCompleteEvent || ""}
+                        onChange={(event) => onUpdateStep(index, { autoCompleteEvent: event.target.value })}
+                        selectClassName="w-full text-xs"
+                      >
+                        {WORKFLOW_EVENTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </Select>
+                    </label>
                   ) : (
-                    <span className="text-xs text-slate-400">Staff mark this one complete by hand.</span>
+                    <span className="text-xs text-slate-400 sm:col-start-2">Staff mark this milestone complete.</span>
                   )}
                 </div>
               </div>
@@ -222,8 +255,12 @@ function TemplateCard({ template, expanded, onToggle, onEdit, onDelete }) {
                     <span className="font-medium text-slate-800">{step.title}</span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${getWorkflowPriorityStyles(step.priority)}`}>{step.priority}</span>
                     {step.autoCompleteTrigger === "Stage" ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                      <span className="inline-flex items-center gap-1 border border-blue-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-blue-800">
                         <Sparkles className="h-2.5 w-2.5" /> Auto at {step.autoCompleteStage}
+                      </span>
+                    ) : step.autoCompleteTrigger === "Event" ? (
+                      <span className="inline-flex items-center gap-1 border border-blue-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-blue-800">
+                        <Sparkles className="h-2.5 w-2.5" /> Auto when {workflowEventLabel(step.autoCompleteEvent).toLowerCase()}
                       </span>
                     ) : null}
                   </div>

@@ -1,8 +1,13 @@
 import prisma from "../services/prisma/client.js";
-import { assignDefaultWorkflowToCase } from "../services/workflowService.js";
+import {
+  assignDefaultWorkflowToCase,
+  reconcileNewWorkflowAutomation,
+  WORKFLOW_AUTO_COMPLETE_EVENTS,
+} from "../services/workflowService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { caseNotificationActionUrl, notifyUsers } from "../services/notificationService.js";
+import { isCaseStageAllowedForType } from "../constants/caseStages.js";
 
 const workflowStepInclude = {
   template: {
@@ -100,7 +105,7 @@ async function requireActiveInternalAssignee(agencyId, assignedToId) {
   if (!assignee) throw createHttpError(404, "Active task assignee not found");
 }
 
-function normalizeStepPayload(steps) {
+function normalizeStepPayload(steps, caseType) {
   if (!Array.isArray(steps)) {
     throw createHttpError(400, "steps must be an array");
   }
@@ -119,6 +124,19 @@ function normalizeStepPayload(steps) {
       throw createHttpError(400, "Invalid completedAt date");
     }
 
+    const autoCompleteTrigger = normalizeNullableString(step.autoCompleteTrigger);
+    const autoCompleteStage = autoCompleteTrigger === "Stage" ? normalizeNullableString(step.autoCompleteStage) : null;
+    const autoCompleteEvent = autoCompleteTrigger === "Event" ? normalizeNullableString(step.autoCompleteEvent) : null;
+    if (autoCompleteTrigger && !["Stage", "Event"].includes(autoCompleteTrigger)) {
+      throw createHttpError(400, "Unsupported workflow auto-complete trigger");
+    }
+    if (autoCompleteTrigger === "Stage" && (!autoCompleteStage || !isCaseStageAllowedForType(caseType, autoCompleteStage))) {
+      throw createHttpError(400, `Choose a valid stage for "${title}" to auto-complete on.`);
+    }
+    if (autoCompleteTrigger === "Event" && !Object.values(WORKFLOW_AUTO_COMPLETE_EVENTS).includes(autoCompleteEvent)) {
+      throw createHttpError(400, `Choose a valid verified event for "${title}" to auto-complete on.`);
+    }
+
     return {
       templateStepId: normalizeNullableString(step.templateStepId),
       title,
@@ -128,6 +146,9 @@ function normalizeStepPayload(steps) {
       isActive: step.isActive !== false,
       status,
       completedAt,
+      autoCompleteTrigger,
+      autoCompleteStage,
+      autoCompleteEvent,
     };
   });
 }
@@ -143,9 +164,9 @@ async function getWorkflowSteps(agencyId, caseId) {
   });
 }
 
-async function replaceCaseWorkflow({ req, scopedCase, templateId = null, steps }) {
+async function replaceCaseWorkflow({ req, scopedCase, templateId = null, steps, reconcileAutomation = false }) {
   const agencyId = req.user.agencyId;
-  const normalizedSteps = normalizeStepPayload(steps);
+  let normalizedSteps = normalizeStepPayload(steps, scopedCase.caseType);
 
   if (templateId) {
     const template = await prisma.workflowTemplate.findFirst({
@@ -155,12 +176,28 @@ async function replaceCaseWorkflow({ req, scopedCase, templateId = null, steps }
       },
       select: {
         id: true,
+        steps: {
+          select: { id: true, autoCompleteTrigger: true, autoCompleteStage: true, autoCompleteEvent: true },
+        },
       },
     });
 
     if (!template) {
       throw createHttpError(404, "Workflow template not found");
     }
+
+    const templateSteps = new Map(template.steps.map((step) => [step.id, step]));
+    normalizedSteps = normalizedSteps.map((step) => {
+      if (!step.templateStepId) return step;
+      const templateStep = templateSteps.get(step.templateStepId);
+      if (!templateStep) throw createHttpError(400, "Workflow step does not belong to the selected template");
+      return {
+        ...step,
+        autoCompleteTrigger: templateStep.autoCompleteTrigger,
+        autoCompleteStage: templateStep.autoCompleteStage,
+        autoCompleteEvent: templateStep.autoCompleteEvent,
+      };
+    });
   }
 
   await prisma.$transaction(async (tx) => {
@@ -186,6 +223,9 @@ async function replaceCaseWorkflow({ req, scopedCase, templateId = null, steps }
           isActive: step.isActive,
           status: step.status,
           completedAt: step.completedAt,
+          autoCompleteTrigger: step.autoCompleteTrigger,
+          autoCompleteStage: step.autoCompleteStage,
+          autoCompleteEvent: step.autoCompleteEvent,
         })),
       });
     }
@@ -200,6 +240,16 @@ async function replaceCaseWorkflow({ req, scopedCase, templateId = null, steps }
     details: "Case workflow updated",
   });
 
+  if (reconcileAutomation) {
+    const createdSteps = await getWorkflowSteps(agencyId, scopedCase.id);
+    await reconcileNewWorkflowAutomation(
+      agencyId,
+      scopedCase.id,
+      createdSteps.filter((step) => !step.isStandaloneTask).map((step) => step.id),
+      { actorUserId: req.user.id, clientId: scopedCase.clientId },
+    );
+  }
+
   return getWorkflowSteps(agencyId, scopedCase.id);
 }
 
@@ -207,10 +257,14 @@ export async function getCaseWorkflow(req, res) {
   const agencyId = req.user.agencyId;
   const scopedCase = await findScopedCase(req);
 
-  await assignDefaultWorkflowToCase(prisma, {
+  const assignment = await assignDefaultWorkflowToCase(prisma, {
     agencyId,
     caseId: scopedCase.id,
     caseType: scopedCase.caseType,
+  });
+  await reconcileNewWorkflowAutomation(agencyId, scopedCase.id, assignment.automationUpdatedStepIds, {
+    actorUserId: req.user.id,
+    clientId: scopedCase.clientId,
   });
 
   const steps = await getWorkflowSteps(agencyId, scopedCase.id);
@@ -257,9 +311,12 @@ export async function applyCaseWorkflowTemplate(req, res) {
     sortOrder: step.sortOrder,
     isActive: selectedStepIds ? selectedStepIds.has(step.id) : true,
     status: "Pending",
+    autoCompleteTrigger: step.autoCompleteTrigger,
+    autoCompleteStage: step.autoCompleteStage,
+    autoCompleteEvent: step.autoCompleteEvent,
   }));
 
-  const data = await replaceCaseWorkflow({ req, scopedCase, templateId, steps });
+  const data = await replaceCaseWorkflow({ req, scopedCase, templateId, steps, reconcileAutomation: true });
   res.json({ data });
 }
 

@@ -469,6 +469,19 @@ async function processCaseInvoiceEvent(event, invoiceId) {
   await processBalance.catch((error) => {
     logger.warn("incentive.credit_failed", { agencyId: event.agencyId, caseInvoiceId: updated.id, trigger: "QBO_WEBHOOK", reason: error.message });
   });
+  if (!invoice.isVoided && Number(row.balance) > 0.005 && Number(updated.balance) <= 0.005) {
+    await recordActivity({
+      agencyId: event.agencyId,
+      userId: null,
+      clientId: updated.clientId,
+      caseId: updated.caseId,
+      action: "invoice.paid",
+      details: `${updated.invoiceNumber} paid in QuickBooks`,
+      entityType: "caseInvoice",
+      entityId: updated.id,
+      metadata: { source: "QBO_WEBHOOK", qbInvoiceId: invoiceId },
+    }).catch(() => {});
+  }
   return true;
 }
 

@@ -1,6 +1,25 @@
-import { ArrowUpRight, CheckCircle2, Circle } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Circle, Sparkles } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { getWorkflowPriorityStyles, getWorkflowProgress } from "./caseProfileUtils";
+
+const EVENT_LABELS = {
+  RetainerSigned: "Retainer signed",
+  PaymentConfirmed: "Payment confirmed",
+  RetainerAndPaymentConfirmed: "Retainer signed + payment confirmed",
+  QuestionnaireSubmitted: "Questionnaire submitted",
+  FormSigned: "Form signed",
+  FormFinalized: "Form finalized",
+  DocumentFinalized: "Document finalized",
+  ApplicationSubmitted: "Application submitted",
+  DecisionRecorded: "Decision recorded",
+  CaseClosed: "Case closed",
+};
+
+function automationLabel(step) {
+  if (step.autoCompleteTrigger === "Stage" && step.autoCompleteStage) return `At ${step.autoCompleteStage}`;
+  if (step.autoCompleteTrigger === "Event" && step.autoCompleteEvent) return EVENT_LABELS[step.autoCompleteEvent] || "Verified event";
+  return null;
+}
 
 export default function WorkflowTimeline({ steps, loadError, onToggleStep, savingStepId, onOpen }) {
   const { activeSteps, completedCount, totalCount, percent } = getWorkflowProgress(steps);
@@ -57,6 +76,7 @@ export default function WorkflowTimeline({ steps, loadError, onToggleStep, savin
           <div className="flex min-w-max items-start">
             {activeSteps.map((step, index) => {
               const isComplete = step.status === "Completed";
+              const autoLabel = automationLabel(step);
 
               return (
                 <div key={step.id} className="relative flex min-w-[170px] flex-col pr-4">
@@ -82,6 +102,11 @@ export default function WorkflowTimeline({ steps, loadError, onToggleStep, savin
                   {step.priority === "High" || step.priority === "Urgent" ? (
                     <span className={`mt-2 w-fit rounded-full px-2 py-1 text-[10px] font-semibold ${getWorkflowPriorityStyles(step.priority)}`}>
                       {step.priority}
+                    </span>
+                  ) : null}
+                  {autoLabel ? (
+                    <span className="mt-2 inline-flex w-fit items-center gap-1 border border-blue-200 bg-white px-2 py-1 text-[10px] font-semibold text-blue-800">
+                      <Sparkles className="h-2.5 w-2.5" /> {autoLabel}
                     </span>
                   ) : null}
                 </div>

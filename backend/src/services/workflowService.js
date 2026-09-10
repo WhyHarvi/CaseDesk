@@ -4,11 +4,75 @@ import { CASE_STAGES } from "../constants/caseStages.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { logger } from "./logger.js";
 
+export const WORKFLOW_AUTO_COMPLETE_EVENTS = Object.freeze({
+  RETAINER_SIGNED: "RetainerSigned",
+  PAYMENT_CONFIRMED: "PaymentConfirmed",
+  RETAINER_AND_PAYMENT_CONFIRMED: "RetainerAndPaymentConfirmed",
+  QUESTIONNAIRE_SUBMITTED: "QuestionnaireSubmitted",
+  FORM_SIGNED: "FormSigned",
+  FORM_FINALIZED: "FormFinalized",
+  DOCUMENT_FINALIZED: "DocumentFinalized",
+  APPLICATION_SUBMITTED: "ApplicationSubmitted",
+  DECISION_RECORDED: "DecisionRecorded",
+  CASE_CLOSED: "CaseClosed",
+});
+
+export const WORKFLOW_EVENT_LABELS = Object.freeze({
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_SIGNED]: "retainer is signed",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED]: "payment is confirmed",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_AND_PAYMENT_CONFIRMED]: "retainer is signed and initial payment is confirmed",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.QUESTIONNAIRE_SUBMITTED]: "questionnaire is submitted",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.FORM_SIGNED]: "case form is signed",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.FORM_FINALIZED]: "case form is finalized",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.DOCUMENT_FINALIZED]: "client document is finalized",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.APPLICATION_SUBMITTED]: "application is submitted",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.DECISION_RECORDED]: "decision is recorded",
+  [WORKFLOW_AUTO_COMPLETE_EVENTS.CASE_CLOSED]: "case is closed",
+});
+
+const ACTIVITY_WORKFLOW_EVENTS = Object.freeze({
+  "correspondence.portal_signed": WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_SIGNED,
+  "lead.retainer_signed": WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_SIGNED,
+  "payment.approved": WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED,
+  "invoice.manual_payment_recorded": WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED,
+  "invoice.paid": WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED,
+  "questionnaire.portal_submitted": WORKFLOW_AUTO_COMPLETE_EVENTS.QUESTIONNAIRE_SUBMITTED,
+  "questionnaire.reviewed": WORKFLOW_AUTO_COMPLETE_EVENTS.QUESTIONNAIRE_SUBMITTED,
+  "case_form.portal_signed": WORKFLOW_AUTO_COMPLETE_EVENTS.FORM_SIGNED,
+  "case_form.finalized": WORKFLOW_AUTO_COMPLETE_EVENTS.FORM_FINALIZED,
+  "client_document.finalized": WORKFLOW_AUTO_COMPLETE_EVENTS.DOCUMENT_FINALIZED,
+  "case.submitted": WORKFLOW_AUTO_COMPLETE_EVENTS.APPLICATION_SUBMITTED,
+  "case.decision_approved": WORKFLOW_AUTO_COMPLETE_EVENTS.DECISION_RECORDED,
+  "case.decision_refused": WORKFLOW_AUTO_COMPLETE_EVENTS.DECISION_RECORDED,
+  "case.closed": WORKFLOW_AUTO_COMPLETE_EVENTS.CASE_CLOSED,
+});
+
+export function workflowEventForActivityAction(action) {
+  return ACTIVITY_WORKFLOW_EVENTS[String(action || "")] || null;
+}
+
+function builtInStepAutomation(title) {
+  if (title === "Retainer Agreement") return { autoCompleteTrigger: "Event", autoCompleteEvent: WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_AND_PAYMENT_CONFIRMED };
+  if (title === "Assessment Questionnaire") return { autoCompleteTrigger: "Event", autoCompleteEvent: WORKFLOW_AUTO_COMPLETE_EVENTS.QUESTIONNAIRE_SUBMITTED };
+  if (title === "Submit to IRCC" || title === "Submit to ESDC") return { autoCompleteTrigger: "Event", autoCompleteEvent: WORKFLOW_AUTO_COMPLETE_EVENTS.APPLICATION_SUBMITTED };
+  if (title === "Decision") return { autoCompleteTrigger: "Event", autoCompleteEvent: WORKFLOW_AUTO_COMPLETE_EVENTS.DECISION_RECORDED };
+  if (title === "Invoice and Close") return { autoCompleteTrigger: "Event", autoCompleteEvent: WORKFLOW_AUTO_COMPLETE_EVENTS.CASE_CLOSED };
+  if (title === "Initial Consultation" || title === "Consultation") return { autoCompleteTrigger: "Stage", autoCompleteStage: "Retainer Pending" };
+  if (title.startsWith("Document Request")) return { autoCompleteTrigger: "Stage", autoCompleteStage: "Reviewing Documents" };
+  if (title === "Document Review") return { autoCompleteTrigger: "Stage", autoCompleteStage: "Application Preparing" };
+  if (title === "Immigration Forms") return { autoCompleteTrigger: "Stage", autoCompleteStage: "Application Under Review" };
+  if (["Client Review and Signature", "RCIC Review", "Application Package Review"].includes(title)) return { autoCompleteTrigger: "Stage", autoCompleteStage: "Submitted" };
+  if (title === "School Application Support") return { autoCompleteTrigger: "Stage", autoCompleteStage: "Offer Letter Application Submitted" };
+  if (title === "Letter of Acceptance (LOA)") return { autoCompleteTrigger: "Stage", autoCompleteStage: "Offer Letter Received" };
+  return {};
+}
+
 function workflowStep(title, description, priority = "Normal") {
   return {
     title,
     description,
     priority,
+    ...builtInStepAutomation(title),
   };
 }
 
@@ -244,7 +308,10 @@ function templateStepsAreCurrent(existingSteps, desiredSteps) {
       normalizeNullableString(existingStep.description) === normalizeNullableString(step.description) &&
       existingStep.priority === (step.priority || "Normal") &&
       existingStep.sortOrder === index + 1 &&
-      existingStep.isRequired === true
+      existingStep.isRequired === true &&
+      normalizeNullableString(existingStep.autoCompleteTrigger) === normalizeNullableString(step.autoCompleteTrigger) &&
+      normalizeNullableString(existingStep.autoCompleteStage) === normalizeNullableString(step.autoCompleteStage) &&
+      normalizeNullableString(existingStep.autoCompleteEvent) === normalizeNullableString(step.autoCompleteEvent)
     );
   });
 }
@@ -266,6 +333,9 @@ async function replaceTemplateSteps(db, { agencyId, templateId, steps }) {
       priority: step.priority || "Normal",
       sortOrder: index + 1,
       isRequired: true,
+      autoCompleteTrigger: step.autoCompleteTrigger || null,
+      autoCompleteStage: step.autoCompleteStage || null,
+      autoCompleteEvent: step.autoCompleteEvent || null,
     })),
   });
 }
@@ -341,6 +411,9 @@ export async function ensureDefaultWorkflowTemplates(db = prisma, agencyId) {
             priority: step.priority,
             sortOrder: index + 1,
             isRequired: true,
+            autoCompleteTrigger: step.autoCompleteTrigger || null,
+            autoCompleteStage: step.autoCompleteStage || null,
+            autoCompleteEvent: step.autoCompleteEvent || null,
           })),
         },
       },
@@ -388,19 +461,74 @@ export async function findWorkflowTemplateForCaseType(db = prisma, { agencyId, c
   );
 }
 
+async function syncCaseWorkflowAutomationFromTemplate(db, { agencyId, caseId, template }) {
+  if (!template?.id || !template.steps?.length) return [];
+
+  const caseSteps = await db.caseWorkflowStep.findMany({
+    where: { agencyId, caseId, templateId: template.id, isStandaloneTask: false },
+  });
+  const templateById = new Map(template.steps.map((step) => [step.id, step]));
+  const templateByTitle = new Map(template.steps.map((step) => [normalizeCaseType(step.title), step]));
+  const changedStepIds = [];
+
+  for (const caseStep of caseSteps) {
+    const templateStep = templateById.get(caseStep.templateStepId) || templateByTitle.get(normalizeCaseType(caseStep.title));
+    if (!templateStep) continue;
+    const nextTrigger = templateStep.autoCompleteTrigger || null;
+    const nextStage = templateStep.autoCompleteStage || null;
+    const nextEvent = templateStep.autoCompleteEvent || null;
+    if (
+      caseStep.templateStepId === templateStep.id &&
+      caseStep.autoCompleteTrigger === nextTrigger &&
+      caseStep.autoCompleteStage === nextStage &&
+      caseStep.autoCompleteEvent === nextEvent
+    ) continue;
+
+    await db.caseWorkflowStep.update({
+      where: { id: caseStep.id },
+      data: {
+        templateStepId: templateStep.id,
+        autoCompleteTrigger: nextTrigger,
+        autoCompleteStage: nextStage,
+        autoCompleteEvent: nextEvent,
+      },
+    });
+    changedStepIds.push(caseStep.id);
+  }
+
+  return changedStepIds;
+}
+
 export async function assignDefaultWorkflowToCase(db = prisma, { agencyId, caseId, caseType }) {
+  const template = await findWorkflowTemplateForCaseType(db, { agencyId, caseType });
   const existingCount = await db.caseWorkflowStep.count({
     where: {
       agencyId,
       caseId,
+      isStandaloneTask: false,
     },
   });
 
   if (existingCount > 0) {
-    return { createdCount: 0, template: null };
+    const assignedTemplateId = await db.caseWorkflowStep.findFirst({
+      where: { agencyId, caseId, isStandaloneTask: false, templateId: { not: null } },
+      select: { templateId: true },
+    });
+    const assignedTemplate = assignedTemplateId?.templateId === template?.id
+      ? template
+      : assignedTemplateId?.templateId
+        ? await db.workflowTemplate.findFirst({
+            where: { id: assignedTemplateId.templateId, agencyId },
+            include: { steps: { orderBy: { sortOrder: "asc" } } },
+          })
+        : null;
+    const automationUpdatedStepIds = await syncCaseWorkflowAutomationFromTemplate(db, {
+      agencyId,
+      caseId,
+      template: assignedTemplate,
+    });
+    return { createdCount: 0, template: assignedTemplate, automationUpdatedStepIds };
   }
-
-  const template = await findWorkflowTemplateForCaseType(db, { agencyId, caseType });
 
   if (!template?.steps?.length) {
     return { createdCount: 0, template };
@@ -419,13 +547,14 @@ export async function assignDefaultWorkflowToCase(db = prisma, { agencyId, caseI
     status: "Pending",
     autoCompleteTrigger: step.autoCompleteTrigger,
     autoCompleteStage: step.autoCompleteStage,
+    autoCompleteEvent: step.autoCompleteEvent,
   }));
 
   const result = await db.caseWorkflowStep.createMany({
     data: steps,
   });
 
-  return { createdCount: result.count, template };
+  return { createdCount: result.count, template, automationUpdatedStepIds: [] };
 }
 
 // Mirrors paymentScheduleService's evaluateStageTriggers exactly — a
@@ -441,7 +570,7 @@ export async function evaluateWorkflowStepStageTriggers(agencyId, caseId, oldSta
   if (newIndex === -1 || newIndex <= oldIndex) return [];
 
   const candidates = await prisma.caseWorkflowStep.findMany({
-    where: { agencyId, caseId, status: "Pending", autoCompleteTrigger: "Stage" },
+    where: { agencyId, caseId, isActive: true, isStandaloneTask: false, status: "Pending", autoCompleteTrigger: "Stage" },
   });
   const due = candidates.filter((step) => {
     const stageIndex = CASE_STAGES.indexOf(step.autoCompleteStage);
@@ -449,13 +578,15 @@ export async function evaluateWorkflowStepStageTriggers(agencyId, caseId, oldSta
   });
   if (!due.length) return [];
 
-  const now = new Date();
-  await prisma.caseWorkflowStep.updateMany({
-    where: { id: { in: due.map((step) => step.id) } },
-    data: { status: "Completed", completedAt: now },
-  });
-
+  const completed = [];
   for (const step of due) {
+    const completedAt = new Date();
+    const claimed = await prisma.caseWorkflowStep.updateMany({
+      where: { id: step.id, status: "Pending" },
+      data: { status: "Completed", completedAt },
+    });
+    if (claimed.count !== 1) continue;
+    completed.push({ ...step, status: "Completed", completedAt });
     await recordActivity({
       agencyId,
       userId: actorUserId,
@@ -471,5 +602,159 @@ export async function evaluateWorkflowStepStageTriggers(agencyId, caseId, oldSta
     });
   }
 
-  return due.map((step) => ({ ...step, status: "Completed", completedAt: now }));
+  return completed;
+}
+
+export async function evaluateWorkflowStepEventTriggers(
+  agencyId,
+  caseId,
+  eventName,
+  { actorUserId = null, clientId = null, occurredAt = new Date(), sourceAction = null, db = prisma, activityRecorder = recordActivity } = {},
+) {
+  if (!Object.values(WORKFLOW_AUTO_COMPLETE_EVENTS).includes(eventName)) return [];
+
+  const candidateEvents = [eventName];
+  if ([WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_SIGNED, WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED].includes(eventName)) {
+    candidateEvents.push(WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_AND_PAYMENT_CONFIRMED);
+  }
+  let candidates = await db.caseWorkflowStep.findMany({
+    where: {
+      agencyId,
+      caseId,
+      isActive: true,
+      isStandaloneTask: false,
+      status: "Pending",
+      autoCompleteTrigger: "Event",
+      autoCompleteEvent: { in: candidateEvents },
+    },
+  });
+  if (candidates.some((step) => step.autoCompleteEvent === WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_AND_PAYMENT_CONFIRMED)) {
+    const evidence = await db.activityLog.findMany({
+      where: {
+        agencyId,
+        caseId,
+        action: {
+          in: Object.entries(ACTIVITY_WORKFLOW_EVENTS)
+            .filter(([, mappedEvent]) => [WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_SIGNED, WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED].includes(mappedEvent))
+            .map(([action]) => action),
+        },
+      },
+      select: { action: true },
+    });
+    const observed = new Set(evidence.map((item) => ACTIVITY_WORKFLOW_EVENTS[item.action]));
+    const compoundSatisfied = observed.has(WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_SIGNED) && observed.has(WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED);
+    if (!compoundSatisfied) {
+      candidates = candidates.filter((step) => step.autoCompleteEvent !== WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_AND_PAYMENT_CONFIRMED);
+    }
+  }
+  const completed = [];
+
+  for (const step of candidates) {
+    const completedAt = occurredAt instanceof Date ? occurredAt : new Date(occurredAt);
+    const claimed = await db.caseWorkflowStep.updateMany({
+      where: { id: step.id, status: "Pending" },
+      data: { status: "Completed", completedAt },
+    });
+    if (claimed.count !== 1) continue;
+    completed.push({ ...step, status: "Completed", completedAt });
+    await activityRecorder({
+      agencyId,
+      userId: actorUserId,
+      clientId,
+      caseId,
+      action: "workflow_step.auto_completed",
+      details: `${step.title} auto-completed — ${WORKFLOW_EVENT_LABELS[step.autoCompleteEvent]}`,
+      entityType: "caseWorkflowStep",
+      entityId: step.id,
+      metadata: { autoCompleteTrigger: "Event", autoCompleteEvent: step.autoCompleteEvent, sourceAction },
+    }).catch((error) => {
+      logger.warn("workflow_step.auto_complete_activity_failed", { agencyId, caseId, stepId: step.id, reason: error.message });
+    });
+  }
+
+  return completed;
+}
+
+// When automation is first added to an already-assigned workflow, reconcile
+// only those newly configured steps against durable history. Limiting this to
+// changed trigger metadata preserves the hybrid/manual override: reopening a
+// step by hand will not be undone merely by viewing the case again.
+export async function reconcileNewWorkflowAutomation(
+  agencyId,
+  caseId,
+  stepIds,
+  { actorUserId = null, clientId = null, db = prisma, activityRecorder = recordActivity } = {},
+) {
+  if (!stepIds?.length) return [];
+  const [caseItem, candidates, activities, stageHistory] = await Promise.all([
+    db.case.findFirst({ where: { id: caseId, agencyId }, select: { stage: true, clientId: true } }),
+    db.caseWorkflowStep.findMany({
+      where: { id: { in: stepIds }, agencyId, caseId, isActive: true, isStandaloneTask: false, status: "Pending" },
+    }),
+    db.activityLog.findMany({
+      where: { agencyId, caseId, action: { in: Object.keys(ACTIVITY_WORKFLOW_EVENTS) } },
+      orderBy: { createdAt: "asc" },
+      select: { action: true, createdAt: true },
+    }),
+    db.caseStageHistory.findMany({
+      where: { agencyId, caseId },
+      orderBy: { createdAt: "asc" },
+      select: { newStage: true, createdAt: true },
+    }),
+  ]);
+  if (!caseItem) return [];
+
+  const completed = [];
+  for (const step of candidates) {
+    let evidence = null;
+    if (step.autoCompleteTrigger === "Event" && step.autoCompleteEvent) {
+      if (step.autoCompleteEvent === WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_AND_PAYMENT_CONFIRMED) {
+        const signed = activities.find((activity) => ACTIVITY_WORKFLOW_EVENTS[activity.action] === WORKFLOW_AUTO_COMPLETE_EVENTS.RETAINER_SIGNED);
+        const paid = activities.find((activity) => ACTIVITY_WORKFLOW_EVENTS[activity.action] === WORKFLOW_AUTO_COMPLETE_EVENTS.PAYMENT_CONFIRMED);
+        evidence = signed && paid ? (signed.createdAt > paid.createdAt ? signed : paid) : null;
+      } else {
+        evidence = activities.find((activity) => ACTIVITY_WORKFLOW_EVENTS[activity.action] === step.autoCompleteEvent) || null;
+      }
+    } else if (step.autoCompleteTrigger === "Stage" && step.autoCompleteStage) {
+      const targetIndex = CASE_STAGES.indexOf(step.autoCompleteStage);
+      const currentIndex = CASE_STAGES.indexOf(caseItem.stage);
+      if (targetIndex !== -1 && currentIndex >= targetIndex) {
+        evidence = stageHistory.find((entry) => CASE_STAGES.indexOf(entry.newStage) >= targetIndex) || { createdAt: new Date(), action: "case.current_stage" };
+      }
+    }
+    if (!evidence) continue;
+
+    const eventName = step.autoCompleteEvent;
+    const completedAt = evidence.createdAt;
+    const claimed = await db.caseWorkflowStep.updateMany({
+      where: { id: step.id, status: "Pending" },
+      data: { status: "Completed", completedAt },
+    });
+    if (claimed.count !== 1) continue;
+    completed.push({ ...step, status: "Completed", completedAt });
+    const reason = step.autoCompleteTrigger === "Event"
+      ? WORKFLOW_EVENT_LABELS[eventName]
+      : `case reached ${step.autoCompleteStage}`;
+    await activityRecorder({
+      agencyId,
+      userId: actorUserId,
+      clientId: clientId || caseItem.clientId,
+      caseId,
+      action: "workflow_step.auto_completed",
+      details: `${step.title} auto-completed — ${reason}`,
+      entityType: "caseWorkflowStep",
+      entityId: step.id,
+      metadata: {
+        autoCompleteTrigger: step.autoCompleteTrigger,
+        autoCompleteStage: step.autoCompleteStage,
+        autoCompleteEvent: eventName,
+        sourceAction: evidence.action || null,
+        reconciled: true,
+      },
+    }).catch((error) => {
+      logger.warn("workflow_step.auto_complete_activity_failed", { agencyId, caseId, stepId: step.id, reason: error.message });
+    });
+  }
+
+  return completed;
 }

@@ -3897,11 +3897,12 @@ model WorkflowTemplateStep {
   isRequired          Boolean              @default(true) @map("is_required")
   // Mirrors PaymentScheduleTemplateInstallment's trigger fields exactly —
   // null means the step stays manual (the default, and the only option
-  // today). "Stage" is currently the only supported trigger: the step
-  // auto-completes the moment the case's stage reaches autoCompleteStage,
-  // evaluated the same way a payment installment fires on a stage change.
+  // today). "Stage" completes from a case-stage transition; "Event"
+  // completes only from a verified CaseDesk event such as a signed retainer,
+  // confirmed payment, application submission, or recorded decision.
   autoCompleteTrigger String?              @map("auto_complete_trigger")
   autoCompleteStage   String?              @map("auto_complete_stage")
+  autoCompleteEvent   String?              @map("auto_complete_event")
   createdAt           DateTime             @default(now()) @map("created_at")
   updatedAt           DateTime             @updatedAt @map("updated_at")
   agency              Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -3934,6 +3935,7 @@ model CaseWorkflowStep {
   // PaymentScheduleTemplateInstallment. See WorkflowTemplateStep above.
   autoCompleteTrigger String?                @map("auto_complete_trigger")
   autoCompleteStage   String?                @map("auto_complete_stage")
+  autoCompleteEvent   String?                @map("auto_complete_event")
   createdAt           DateTime               @default(now()) @map("created_at")
   updatedAt           DateTime               @updatedAt @map("updated_at")
   agency              Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)

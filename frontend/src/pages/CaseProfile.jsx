@@ -1550,6 +1550,9 @@ export default function CaseProfile() {
         isActive: true,
         status: "Pending",
         completedAt: null,
+        autoCompleteTrigger: null,
+        autoCompleteStage: null,
+        autoCompleteEvent: null,
       },
     ]);
   }
@@ -1581,6 +1584,9 @@ export default function CaseProfile() {
           isActive: step.isActive !== false,
           status: step.status || "Pending",
           completedAt: step.completedAt || null,
+          autoCompleteTrigger: step.autoCompleteTrigger || null,
+          autoCompleteStage: step.autoCompleteStage || null,
+          autoCompleteEvent: step.autoCompleteEvent || null,
         })),
       });
 

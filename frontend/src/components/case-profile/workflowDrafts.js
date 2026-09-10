@@ -9,6 +9,9 @@ export function buildDraftStepFromWorkflowStep(step, index) {
     isActive: step.isActive !== false,
     status: step.status || "Pending",
     completedAt: step.completedAt || null,
+    autoCompleteTrigger: step.autoCompleteTrigger || null,
+    autoCompleteStage: step.autoCompleteStage || null,
+    autoCompleteEvent: step.autoCompleteEvent || null,
   };
 }
 
@@ -23,6 +26,9 @@ export function buildDraftStepFromTemplateStep(step, index) {
     isActive: true,
     status: "Pending",
     completedAt: null,
+    autoCompleteTrigger: step.autoCompleteTrigger || null,
+    autoCompleteStage: step.autoCompleteStage || null,
+    autoCompleteEvent: step.autoCompleteEvent || null,
   };
 }
 
@@ -34,5 +40,8 @@ export function buildBlankTemplateStep(index = 0) {
     sortOrder: index + 1,
     priority: "Normal",
     isRequired: true,
+    autoCompleteTrigger: null,
+    autoCompleteStage: null,
+    autoCompleteEvent: null,
   };
 }

@@ -1,9 +1,10 @@
 import prisma from "../services/prisma/client.js";
-import { ensureDefaultWorkflowTemplates } from "../services/workflowService.js";
+import { ensureDefaultWorkflowTemplates, WORKFLOW_AUTO_COMPLETE_EVENTS } from "../services/workflowService.js";
 import { createHttpError } from "../utils/http.js";
 import { isCaseStageAllowedForType } from "../constants/caseStages.js";
 
-const AUTO_COMPLETE_TRIGGERS = new Set(["Stage"]);
+const AUTO_COMPLETE_TRIGGERS = new Set(["Stage", "Event"]);
+const AUTO_COMPLETE_EVENTS = new Set(Object.values(WORKFLOW_AUTO_COMPLETE_EVENTS));
 
 const workflowTemplateInclude = {
   steps: {
@@ -33,15 +34,22 @@ function normalizePriority(value) {
 
 function normalizeAutoComplete(step, caseType) {
   const trigger = normalizeNullableString(step.autoCompleteTrigger);
-  if (!trigger) return { autoCompleteTrigger: null, autoCompleteStage: null };
+  if (!trigger) return { autoCompleteTrigger: null, autoCompleteStage: null, autoCompleteEvent: null };
   if (!AUTO_COMPLETE_TRIGGERS.has(trigger)) {
     throw createHttpError(400, "Unsupported auto-complete trigger.");
   }
-  const stage = normalizeNullableString(step.autoCompleteStage);
-  if (!stage || !isCaseStageAllowedForType(caseType, stage)) {
-    throw createHttpError(400, `Choose a valid stage for "${step.title || "this milestone"}" to auto-complete on.`);
+  if (trigger === "Stage") {
+    const stage = normalizeNullableString(step.autoCompleteStage);
+    if (!stage || !isCaseStageAllowedForType(caseType, stage)) {
+      throw createHttpError(400, `Choose a valid stage for "${step.title || "this milestone"}" to auto-complete on.`);
+    }
+    return { autoCompleteTrigger: trigger, autoCompleteStage: stage, autoCompleteEvent: null };
   }
-  return { autoCompleteTrigger: trigger, autoCompleteStage: stage };
+  const eventName = normalizeNullableString(step.autoCompleteEvent);
+  if (!eventName || !AUTO_COMPLETE_EVENTS.has(eventName)) {
+    throw createHttpError(400, `Choose a valid verified event for "${step.title || "this milestone"}" to auto-complete on.`);
+  }
+  return { autoCompleteTrigger: trigger, autoCompleteStage: null, autoCompleteEvent: eventName };
 }
 
 function normalizeTemplateSteps(steps, caseType) {
@@ -116,6 +124,7 @@ export async function createWorkflowTemplate(req, res) {
           isRequired: step.isRequired,
           autoCompleteTrigger: step.autoCompleteTrigger,
           autoCompleteStage: step.autoCompleteStage,
+          autoCompleteEvent: step.autoCompleteEvent,
         })),
       },
     },
@@ -181,6 +190,7 @@ export async function updateWorkflowTemplate(req, res) {
             isRequired: step.isRequired,
             autoCompleteTrigger: step.autoCompleteTrigger,
             autoCompleteStage: step.autoCompleteStage,
+            autoCompleteEvent: step.autoCompleteEvent,
           })),
         },
       },
