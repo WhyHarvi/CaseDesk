@@ -267,6 +267,7 @@ export async function listCalls(req, res) {
   const resolution = callResolutions.has(req.query.resolution) ? req.query.resolution : null;
   const handledByUserId = clean(req.query.handledByUserId, 100);
   const search = clean(req.query.search, 120);
+  const callbackDueOnly = req.query.attention === "CALLBACK_DUE";
   const where = {
     agencyId: req.auth.agencyId,
     provider: "TWILIO",
@@ -282,19 +283,46 @@ export async function listCalls(req, res) {
         ],
       }] : []),
     ],
-    ...(status ? { status } : {}),
-    ...(direction ? { direction } : {}),
+    ...(callbackDueOnly ? { status: "MISSED", direction: "INBOUND", remoteNumberNormalized: { not: null } } : status ? { status } : {}),
+    ...(!callbackDueOnly && direction ? { direction } : {}),
     ...(resolution ? { resolution } : {}),
     ...(handledByUserId ? { handledByUserId } : {}),
   };
-  const [raw, total, unresolved] = await Promise.all([
+  const [listed, unresolved] = await Promise.all([
     // A phone log is chronological by when the call began. lastEventAt can
     // jump much later when a delayed recording/status callback arrives and
     // would break deterministic time bundles.
-    prisma.callSession.findMany({ where, include: callInclude, orderBy: { startedAt: "desc" }, skip: (page - 1) * limit, take: limit }),
-    prisma.callSession.count({ where }),
+    callbackDueOnly
+      ? prisma.callSession.findMany({
+          where,
+          select: { id: true, direction: true, status: true, remoteNumberNormalized: true, startedAt: true },
+          orderBy: { startedAt: "desc" },
+        })
+      : Promise.all([
+          prisma.callSession.findMany({ where, include: callInclude, orderBy: { startedAt: "desc" }, skip: (page - 1) * limit, take: limit }),
+          prisma.callSession.count({ where }),
+        ]),
     prisma.callSession.count({ where: { agencyId: req.auth.agencyId, provider: "TWILIO", resolution: "UNRESOLVED", ...callAccessWhere(req) } }),
   ]);
+  let raw;
+  let total;
+  if (callbackDueOnly) {
+    // Callback state is derived from a later successful outbound call to the
+    // same normalized number; it is not a column on the missed-call row.
+    // Resolve the filtered IDs before slicing so total and pagination remain
+    // truthful instead of filtering only the current 25-row page in the UI.
+    const callbackAwareCandidates = await addCallbackSummaries(listed, req);
+    const dueIds = callbackAwareCandidates.filter((call) => call.callback?.status === "DUE").map((call) => call.id);
+    total = dueIds.length;
+    const pageIds = dueIds.slice((page - 1) * limit, page * limit);
+    const rows = pageIds.length
+      ? await prisma.callSession.findMany({ where: { ...where, id: { in: pageIds } }, include: callInclude })
+      : [];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    raw = pageIds.map((id) => byId.get(id)).filter(Boolean);
+  } else {
+    [raw, total] = listed;
+  }
   const matched = await addMatchSummaries(raw, req.auth.agencyId);
   const enriched = await addEngagementSummaries(matched, req.auth.agencyId);
   const callbackAware = await addCallbackSummaries(enriched, req);

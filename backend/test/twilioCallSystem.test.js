@@ -452,6 +452,24 @@ test("missed-call attention progresses from new voicemail to callback due to con
   assert.match(callsPage, /Contacted back/);
 });
 
+test("secondary call-history filters live in a long More pill and callback due paginates on server-derived evidence", async () => {
+  const [controller, callsPage] = await Promise.all([
+    source("../src/controllers/callHistoryController.js"),
+    source("../../frontend/src/pages/CallHistoryPage.jsx"),
+  ]);
+
+  assert.match(callsPage, /const SECONDARY_CALL_FILTERS = \[/);
+  assert.match(callsPage, /\["missed", "Missed calls"\]/);
+  assert.match(callsPage, /\["callback_due", "Callback due"\]/);
+  assert.match(callsPage, /min-w-36/);
+  assert.match(callsPage, /aria-haspopup="menu"/);
+  assert.match(callsPage, /if \(view === "callback_due"\) next\.set\("attention", "CALLBACK_DUE"\)/);
+  assert.match(controller, /const callbackDueOnly = req\.query\.attention === "CALLBACK_DUE"/);
+  assert.match(controller, /const callbackAwareCandidates = await addCallbackSummaries\(listed, req\)/);
+  assert.match(controller, /dueIds\.slice\(\(page - 1\) \* limit, page \* limit\)/);
+  assert.match(controller, /where: \{ agencyId: req\.auth\.agencyId/);
+});
+
 test("the clients UI calls clients through the softphone too, with the same outcome popup", async () => {
   const [clientsPage, profilePage] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),

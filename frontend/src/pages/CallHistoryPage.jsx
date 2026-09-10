@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   CalendarPlus,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -25,7 +26,7 @@ import {
   UserRoundPlus,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../components/notifications/NotificationProvider";
@@ -37,6 +38,11 @@ import api from "../services/api";
 
 const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 backdrop-blur-xl";
 const input = "h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100/70";
+const SECONDARY_CALL_FILTERS = [
+  ["missed", "Missed calls"],
+  ["callback_due", "Callback due"],
+  ["outbound", "Outgoing"],
+];
 
 const humanize = (value) => String(value || "").toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const callDirectionLabel = (value) => value === "INBOUND" ? "Incoming" : value === "OUTBOUND" ? "Outgoing" : humanize(value);
@@ -595,11 +601,13 @@ export function CallHistorySection({ provider = "TWILIO" }) {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
   const [selectedMode, setSelectedMode] = useState("");
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+  const moreFiltersRef = useRef(null);
   const page = Math.max(Number(params.get("page")) || 1, 1);
   const view = params.get("view") || "all";
   const search = params.get("search") || "";
-  // Independent of `view` on purpose — "who called" and the existing
-  // all/unresolved/missed/outbound pills are separate axes, so they combine
+  // Independent of `view` on purpose — "who called" and the primary/More
+  // call filters are separate axes, so they combine
   // (e.g. missed calls handled by one specific team member) instead of
   // one resetting the other.
   const agent = params.get("agent") || "";
@@ -612,6 +620,7 @@ export function CallHistorySection({ provider = "TWILIO" }) {
     if (search) next.set("search", search);
     if (view === "unresolved") next.set("resolution", "UNRESOLVED");
     if (view === "missed") next.set("status", "MISSED");
+    if (view === "callback_due") next.set("attention", "CALLBACK_DUE");
     if (view === "outbound") next.set("direction", "OUTBOUND");
     if (agent) next.set("handledByUserId", agent);
     return next.toString();
@@ -645,6 +654,19 @@ export function CallHistorySection({ provider = "TWILIO" }) {
   useEffect(() => { void acknowledgeDestination("calls"); }, []);
   useEffect(() => { setSearchDraft(search); }, [search]);
   useEffect(() => {
+    function closeMoreFilters(event) {
+      if (event.type === "keydown" && event.key !== "Escape") return;
+      if (event.type === "pointerdown" && moreFiltersRef.current?.contains(event.target)) return;
+      setMoreFiltersOpen(false);
+    }
+    document.addEventListener("pointerdown", closeMoreFilters);
+    document.addEventListener("keydown", closeMoreFilters);
+    return () => {
+      document.removeEventListener("pointerdown", closeMoreFilters);
+      document.removeEventListener("keydown", closeMoreFilters);
+    };
+  }, []);
+  useEffect(() => {
     api.get("/leads/staff").then((response) => setStaff(response.data.data || [])).catch(() => setStaff([]));
     // A separate, calling-specific staff list (who can actually receive
     // calls) rather than /leads/staff's broader lead-owner list — this is
@@ -671,6 +693,8 @@ export function CallHistorySection({ provider = "TWILIO" }) {
     setParams((current) => { const next = new URLSearchParams(current); next.set("call", call.id); return next; }, { replace: true });
   }
 
+  const activeSecondaryFilter = SECONDARY_CALL_FILTERS.find(([value]) => value === view);
+
   function closeCall() {
     setSelected(null);
     setSelectedMode("");
@@ -689,7 +713,38 @@ export function CallHistorySection({ provider = "TWILIO" }) {
         <div className="grid gap-4 border-b border-slate-200 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,28rem)] lg:items-end lg:p-5">
           <div>
             <p className="mb-2 text-xs font-semibold text-slate-600">Filter calls</p>
-            <div className="flex flex-wrap gap-2">{[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`], ["missed", "Missed calls"], ["outbound", "Outgoing"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => update({ view: value === "all" ? "" : value })} className={`min-h-10 rounded-full px-3.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${view === value ? "bg-[#007AFF] text-white shadow-[0_6px_16px_rgba(0,122,255,0.24)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"}`}>{label}</button>)}</div>
+            <div className="flex flex-wrap gap-2">
+              {[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => update({ view: value === "all" ? "" : value })} className={`min-h-10 rounded-full px-3.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${view === value ? "bg-[#007AFF] text-white shadow-[0_6px_16px_rgba(0,122,255,0.24)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"}`}>{label}</button>)}
+              <div ref={moreFiltersRef} className="relative">
+                <button
+                  type="button"
+                  aria-expanded={moreFiltersOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setMoreFiltersOpen((current) => !current)}
+                  className={`inline-flex min-h-10 min-w-36 items-center justify-between gap-3 rounded-full border px-4 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${activeSecondaryFilter ? "border-[#002FA7] bg-[#002FA7] text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}
+                >
+                  <span className="whitespace-nowrap">More{activeSecondaryFilter ? ` · ${activeSecondaryFilter[1]}` : ""}</span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${moreFiltersOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+                </button>
+                {moreFiltersOpen ? (
+                  <div role="menu" className="absolute right-0 top-[calc(100%+0.5rem)] z-40 min-w-52 overflow-hidden border border-slate-200 bg-white py-1 shadow-[0_16px_32px_rgba(15,23,42,0.16)] sm:left-0 sm:right-auto">
+                    {SECONDARY_CALL_FILTERS.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={view === value}
+                        onClick={() => { update({ view: value }); setMoreFiltersOpen(false); }}
+                        className={`flex min-h-11 w-full items-center justify-between border-b border-slate-100 px-4 text-left text-xs font-semibold last:border-b-0 ${view === value ? "bg-[#F7F7F8] text-[#002FA7]" : "text-slate-700 hover:bg-[#F7F7F8]"}`}
+                      >
+                        {label}
+                        {view === value ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
             <p className="mt-2 text-[11px] text-slate-400">Repeated calls with the same number within 30 minutes are bundled into one interaction.</p>
           </div>
           <form onSubmit={(event) => { event.preventDefault(); update({ search: searchDraft.trim() }); }}>
