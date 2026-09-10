@@ -1,6 +1,7 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
-import { listQuickBooksItems } from "./quickbooksService.js";
+import { createQuickBooksItem, isQuickBooksDuplicateNameError, listQuickBooksAccounts, listQuickBooksItems } from "./quickbooksService.js";
+import { logger } from "./logger.js";
 
 export const DEFAULT_FEE_CATEGORIES = [
   { code: "fees", name: "Professional fees", description: "Legal and immigration professional services.", kind: "Professional", countsTowardRevenue: true, sortOrder: 10 },
@@ -151,4 +152,68 @@ export async function syncBuiltInFeeCategoryMapping(agencyId, code, itemId, item
     where: { agencyId_code: { agencyId, code } },
     data: { qboItemId: itemId || null, qboItemName: itemName || null },
   });
+}
+
+const PROCESSING_FEE_MAPPING = Object.freeze({
+  "card-surcharge": { settingsIdField: "cardSurchargeItemId", settingsNameField: "cardSurchargeItemName", itemName: "Credit card surcharge" },
+  "bank-transfer-fee": { settingsIdField: "bankTransferFeeItemId", settingsNameField: "bankTransferFeeItemName", itemName: "Bank transfer fee" },
+});
+
+// Processing fees are system-generated invoice lines, so making every
+// workspace manually create and map their bookkeeping items is an avoidable
+// checkout trap. Reuse an exact active item when present; otherwise create a
+// Service item under a real QuickBooks Other Income account and persist both
+// the legacy settings mapping and the built-in fee-category mapping.
+export async function ensureProcessingFeeCategoryMapping(agencyId, code) {
+  const definition = PROCESSING_FEE_MAPPING[code];
+  if (!definition) throw createHttpError(400, "Choose a supported processing fee category.", "VALIDATION_ERROR");
+  await ensureFeeCategories(agencyId);
+  const [settings, category] = await Promise.all([
+    prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } }),
+    prisma.agencyFeeCategory.findUnique({ where: { agencyId_code: { agencyId, code } } }),
+  ]);
+  if (!settings || settings.status !== "connected") {
+    throw createHttpError(409, "Connect QuickBooks in Settings before creating invoices.", "QBO_NOT_CONNECTED");
+  }
+  if (category?.qboItemId) {
+    if (settings[definition.settingsIdField] !== category.qboItemId || settings[definition.settingsNameField] !== category.qboItemName) {
+      await prisma.agencyQuickBooksSettings.update({
+        where: { agencyId },
+        data: { [definition.settingsIdField]: category.qboItemId, [definition.settingsNameField]: category.qboItemName },
+      });
+    }
+    return category;
+  }
+
+  const [items, accounts] = await Promise.all([listQuickBooksItems(agencyId), listQuickBooksAccounts(agencyId)]);
+  const normalizedName = definition.itemName.toLowerCase();
+  let item = items.find((candidate) => candidate.name.trim().toLowerCase() === normalizedName) || null;
+  if (!item) {
+    const incomeAccount = accounts.find((account) => account.accountType === "Other Income" && account.name.trim().toLowerCase() === "other ordinary income")
+      || accounts.find((account) => account.accountType === "Other Income");
+    if (!incomeAccount) {
+      throw createHttpError(409, `QuickBooks needs an active Other Income account before CaseDesk can create the ${definition.itemName} item.`, "QBO_PROCESSING_FEE_ACCOUNT_REQUIRED");
+    }
+    try {
+      item = await createQuickBooksItem(agencyId, { name: definition.itemName, incomeAccountId: incomeAccount.id });
+    } catch (error) {
+      if (!isQuickBooksDuplicateNameError(error)) throw error;
+      const refreshed = await listQuickBooksItems(agencyId);
+      item = refreshed.find((candidate) => candidate.name.trim().toLowerCase() === normalizedName) || null;
+      if (!item) throw error;
+    }
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.agencyQuickBooksSettings.update({
+      where: { agencyId },
+      data: { [definition.settingsIdField]: item.id, [definition.settingsNameField]: item.name },
+    });
+    return tx.agencyFeeCategory.update({
+      where: { agencyId_code: { agencyId, code } },
+      data: { qboItemId: item.id, qboItemName: item.name },
+    });
+  });
+  logger.info("quickbooks.processing_fee_item_mapped", { agencyId, code, itemId: item.id, itemName: item.name });
+  return updated;
 }

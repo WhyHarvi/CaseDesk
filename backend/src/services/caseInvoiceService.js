@@ -20,7 +20,7 @@ import {
 } from "./quickbooksService.js";
 import { generateCaseInvoicePdf } from "./caseInvoicePdfService.js";
 import { syncLeadInitialPaymentFromEvidence } from "../modules/leads/lead.financial.service.js";
-import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
+import { ensureProcessingFeeCategoryMapping, requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
 import { applyLocalCashToInvoice, createApprovedCashLedgerRecord, postApprovedCashTransaction } from "./paymentApprovalLedgerService.js";
 import { resolveCustomPaymentLedger } from "./customPaymentLedgerService.js";
 import { buildInvoiceIncentiveSnapshot, creditCaseInvoiceCollection, resetCreditCursor, reverseCaseInvoiceRefund } from "./incentiveCreditingService.js";
@@ -88,14 +88,12 @@ async function resolveOnlineMethodSurcharge(agencyId, { onlineMethod, quickBooks
     // for consistency rather than drawing a distinction not confirmed
     // during the agency's compliance review.
     if (clientProvince !== "QC" && ratePercent > 0) {
-      const surchargeCategory = await requireFeeCategory(agencyId, isCard ? "card-surcharge" : "bank-transfer-fee");
+      let surchargeCategory = await requireFeeCategory(agencyId, isCard ? "card-surcharge" : "bank-transfer-fee");
       const surchargeAmount = money((total * ratePercent) / 100);
-      // Processing-fee mappings are optional setup. An older workspace may
-      // have a non-zero default rate but no mapped QuickBooks item; that
-      // must not block the client from paying. The portal receives an
-      // effective 0% rate in the same state, so the disclosed total and
-      // provider invoice remain identical.
-      if (surchargeAmount > 0 && surchargeCategory.qboItemId) surcharge = { category: surchargeCategory, amount: surchargeAmount };
+      if (surchargeAmount > 0 && !surchargeCategory.qboItemId) {
+        surchargeCategory = await ensureProcessingFeeCategoryMapping(agencyId, surchargeCategory.code);
+      }
+      if (surchargeAmount > 0) surcharge = { category: surchargeCategory, amount: surchargeAmount };
     }
   }
   // QuickBooks' own mechanism for restricting which method its hosted "Pay

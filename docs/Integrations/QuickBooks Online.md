@@ -34,5 +34,7 @@ When invoice creation returns a duplicate-document-number fault, CaseDesk querie
 
 Before any funds are received, a client may change the selected payment method. CaseDesk reads the live invoice, requires its provider balance to equal its total, and performs a SyncToken-protected full update of the same QuickBooks invoice to replace its pricing lines and hosted-method flags. It never voids or creates a second receivable for this action; any provider or local payment/refund activity locks the method.
 
+Credit-card and bank-transfer processing fees use dedicated QuickBooks Service items mapped to `Other Income`. When a configured fee has no mapping, CaseDesk first reuses an exact-name active item or provisions the system item and persists both the QuickBooks settings and built-in fee-category mappings. The configured client-facing rate is never suppressed because the item is missing.
+
 ## Environment Variables
 `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REDIRECT_URI`, `QBO_ENVIRONMENT`, `QBO_WEBHOOK_VERIFIER_TOKEN`, `QBO_WEBHOOK_POLL_MS`, `QBO_HOLD_RECONCILE_COOLDOWN_MS`, `MAIL_SETTINGS_ENCRYPTION_KEY`.

@@ -69,6 +69,23 @@ test("a client can change the method on the same fully-unpaid QuickBooks invoice
   assert.match(portal, /changingInvoiceId === invoice\.id/);
 });
 
+test("configured processing rates stay visible and missing QuickBooks fee items are provisioned", async () => {
+  const [feeCategories, invoiceService, portalController] = await Promise.all([
+    source("../src/services/feeCategoryService.js"),
+    source("../src/services/caseInvoiceService.js"),
+    source("../src/controllers/clientPortalController.js"),
+  ]);
+
+  assert.match(feeCategories, /export async function ensureProcessingFeeCategoryMapping/);
+  assert.match(feeCategories, /accountType === "Other Income"/);
+  assert.match(feeCategories, /createQuickBooksItem\(agencyId/);
+  assert.match(feeCategories, /quickbooks\.processing_fee_item_mapped/);
+  assert.match(invoiceService, /surchargeCategory = await ensureProcessingFeeCategoryMapping/);
+  assert.match(portalController, /cardSurchargeRatePercent: Number\(quickBooksSettings\.cardSurchargeRatePercent\)/);
+  assert.match(portalController, /bankTransferFeeRatePercent: Number\(quickBooksSettings\.bankTransferFeeRatePercent\)/);
+  assert.doesNotMatch(portalController, /cardSurchargeItemId \? Number\(quickBooksSettings\.cardSurchargeRatePercent\) : 0/);
+});
+
 test("client payment evidence is isolated from confirmed payment fields and staff can review it", async () => {
   const [schema, portalController, controller, portalRoutes, routes, workspace, upload] = await Promise.all([
     source("../prisma/schema.prisma"),

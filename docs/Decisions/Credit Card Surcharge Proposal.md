@@ -142,12 +142,12 @@ unverified evidence only and cannot change the invoice balance. Staff verifies
 receipt and records the payment through the existing audited manual-payment
 workflow.
 
-A configured surcharge rate is effective only while its dedicated QuickBooks
-item is mapped. This prevents older workspaces—which inherited non-zero default
-rates before creating the new items—from being blocked at method selection. In
-that state the portal displays the base total with no added fee and the backend
-creates that same base-total invoice. Mapping the item re-enables the configured
-fee; CaseDesk never displays a fee and then silently omits it.
+The portal always displays the configured surcharge rates before selection. If
+a dedicated QuickBooks item is missing, CaseDesk reuses an exact active item or
+creates the system-owned Service item under an active `Other Income` account,
+then persists both mapping records before creating or updating the invoice. A
+workspace with no eligible income account receives a specific setup error;
+CaseDesk never silently changes a configured fee to zero.
 
 ## Data model impact (regardless of option chosen)
 

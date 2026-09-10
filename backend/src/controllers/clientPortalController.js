@@ -586,8 +586,8 @@ export async function getPortalPayments(req, res) {
       // and docs/Decisions/Credit Card Surcharge Proposal.md.
       surchargeRates: quickBooksSettings
         ? {
-            cardSurchargeRatePercent: quickBooksSettings.cardSurchargeItemId ? Number(quickBooksSettings.cardSurchargeRatePercent) : 0,
-            bankTransferFeeRatePercent: quickBooksSettings.bankTransferFeeItemId ? Number(quickBooksSettings.bankTransferFeeRatePercent) : 0,
+            cardSurchargeRatePercent: Number(quickBooksSettings.cardSurchargeRatePercent),
+            bankTransferFeeRatePercent: Number(quickBooksSettings.bankTransferFeeRatePercent),
           }
         : null,
       syncWarning: ledger.syncWarning,
