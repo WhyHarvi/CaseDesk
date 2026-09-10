@@ -13,7 +13,7 @@ import { caseAccessWhere } from "../middleware/authorization.js";
 import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
 import { imm5476RepresentativeSignatureName, rebuildImm5476FromOriginal, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
 import { APPLICANT_SIGNATURE, MAX_SIGNATURE_FILL_FRACTION, MIN_SIGNATURE_FILL_FRACTION, REPRESENTATIVE_SIGNATURE, resolveSignatureFillFraction } from "../services/imm5476SignatureFields.js";
-import { regenerateSignedImm5476Copy } from "../services/imm5476SignatureService.js";
+import { createImm5476SignatureEditorPreview, regenerateSignedImm5476Copy } from "../services/imm5476SignatureService.js";
 import { isTracedImageSignature, traceSignatureImageToStrokes } from "../services/signatureImageTrace.js";
 
 const maxFileSize = 25 * 1024 * 1024;
@@ -441,11 +441,14 @@ export async function serveCaseFormFile(req, res) {
       mimeType: true,
       formNumber: true,
       id: true,
+      agencyId: true,
       currentCopyType: true,
       lockedAt: true,
       signatureScale: true,
       signatureScaleX: true,
       signatureScaleY: true,
+      applicantSignatureScaleX: true,
+      applicantSignatureScaleY: true,
       representativeUser: { select: { fullName: true, firstName: true, lastName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true } },
     },
   });
@@ -513,7 +516,10 @@ export async function serveCaseFormFile(req, res) {
   const representativeGivenNames = representativeLastName
     ? String(representative?.firstName || "").trim()
     : (representativeNameParts.length > 1 ? representativeNameParts.slice(0, -1).join(" ") : "");
-  const buffer = isImm5476 && !isSignedCopy
+  const signatureTarget = ["applicant", "all"].includes(req.query.signatureTarget) ? req.query.signatureTarget : "representative";
+  const buffer = signatureEditor && isSignedCopy
+    ? await createImm5476SignatureEditorPreview({ form: data, target: signatureTarget })
+    : isImm5476 && !isSignedCopy
     ? await stampXfaPdfFormValues(
         preparedBuffer,
         [],

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { PDFDocument } from "pdf-lib";
+import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+import { renderSignedImm5476Signatures, stripImm5476SignatureInk } from "../src/services/imm5476SignatureService.js";
 import { validatedSignatureStrokes } from "../src/utils/signatureStrokes.js";
 
 const source = async (relative) => readFile(new URL(relative, import.meta.url), "utf8");
@@ -220,13 +223,12 @@ test("a client-signed or finalized IMM 5476 is served exactly as stored, even af
   const controller = await source("../src/controllers/caseFormController.js");
   assert.match(controller, /currentCopyType: true/);
   assert.match(controller, /const isSignedCopy = data\.currentCopyType === "ClientSigned" \|\| data\.currentCopyType === "Finalized"/);
-  // The representative-refresh rebuild and re-stamp must both be gated off
-  // once a client has signed — an applicant's ink signature is a PDF
-  // annotation, not a field value, so rebuilding from the blank original or
-  // re-stamping a different representative's info over it would silently
-  // discard or misrepresent a signature the client already gave.
+  // Normal viewing must remain byte-for-byte stored once a client has signed.
+  // The only exception is the explicit signature editor, which creates a
+  // non-persisted clean preview so its live handle doesn't overlay baked ink.
   assert.match(controller, /if \(isImm5476 && !isSignedCopy\) \{\s*\n\s*const embeddedSigner/);
-  assert.match(controller, /const buffer = isImm5476 && !isSignedCopy\s*\n\s*\? await stampXfaPdfFormValues/);
+  assert.match(controller, /const buffer = signatureEditor && isSignedCopy\s*\n\s*\? await createImm5476SignatureEditorPreview/);
+  assert.match(controller, /: isImm5476 && !isSignedCopy\s*\n\s*\? await stampXfaPdfFormValues/);
 });
 
 test("browser autosaves cannot downgrade a client-signed form to in progress", async () => {
@@ -303,14 +305,89 @@ test("editable IMM 5476 signatures can be resized directly on the PDF, for eithe
   // scale field.
   assert.match(service, /export async function regenerateSignedImm5476Copy/);
   assert.match(service, /copyType: \{ notIn: \["ClientSigned", "Finalized"\] \}/);
+  assert.match(service, /stripImm5476SignatureInk\(source\)/);
+  assert.match(controller, /createImm5476SignatureEditorPreview\(\{ form: data, target:/);
   assert.match(workspace, /\?signatureEditor=1/);
+  assert.match(workspace, /signatureTarget=all/);
+  assert.match(workspace, /Promise\.allSettled\(\[/);
+  assert.match(workspace, /target=representative/);
+  assert.match(workspace, /target=applicant/);
   assert.match(workspace, /onSignatureTransformChange/);
-  assert.match(workspace, /Resize client signature/);
-  assert.match(workspace, /openStored\(item, false, "applicant"\)/);
+  assert.doesNotMatch(workspace, />\s*Resize client signature\s*</);
+  assert.doesNotMatch(workspace, />\s*Resize representative signature\s*</);
   assert.match(viewer, /SignatureResizeLayer/);
-  assert.match(viewer, /drag side handles for width/);
+  assert.match(viewer, /Signatures are editable in the form/);
   assert.match(viewer, /W \{Math\.round\(scales\.x \* 100\)\}% · H \{Math\.round\(scales\.y \* 100\)\}%/);
-  assert.match(viewer, /SIGNATURE_ANNOTATION_ID/);
+  assert.match(viewer, /signatureAnnotationId\(editor\.target\)/);
+});
+
+test("signature regeneration strips baked ink and renders each signer exactly once", async () => {
+  const originalDocument = await PDFDocument.create();
+  for (let index = 0; index < 4; index += 1) originalDocument.addPage([612, 792]);
+  const original = Buffer.from(await originalDocument.save());
+  const request = {
+    signedAt: new Date("2026-09-10T12:00:00.000Z"),
+    representativeSignatureStrokes: [[[0, 0], [1, 1]]],
+    applicantSignatureStrokes: [[[0, 1], [1, 0]]],
+    representativeNameSnapshot: "Representative",
+    applicantNameSnapshot: "Client",
+  };
+  const fractions = {
+    representative: { x: 0.8, y: 0.8 },
+    applicant: { x: 0.8, y: 0.8 },
+  };
+  const representativeFilled = await renderSignedImm5476Signatures(original, request, fractions, { omitTarget: "applicant" });
+  const clean = await stripImm5476SignatureInk(representativeFilled);
+  const regenerated = await renderSignedImm5476Signatures(clean, request, fractions);
+  const task = pdfjs.getDocument({ data: new Uint8Array(regenerated), enableXfa: true });
+
+  try {
+    const document = await task.promise;
+    const representativePage = await document.getPage(3);
+    const applicantPage = await document.getPage(4);
+    const representativeInk = (await representativePage.getAnnotations({ intent: "display" }))
+      .filter((annotation) => String(annotation.subtype || "").toLowerCase() === "ink");
+    const applicantInk = (await applicantPage.getAnnotations({ intent: "display" }))
+      .filter((annotation) => String(annotation.subtype || "").toLowerCase() === "ink");
+
+    assert.equal(representativeInk.length, 1);
+    assert.equal(applicantInk.length, 1);
+  } finally {
+    await task.destroy().catch(() => {});
+  }
+});
+
+test("signature editor previews omit each signature that will be edited live", async () => {
+  const originalDocument = await PDFDocument.create();
+  for (let index = 0; index < 4; index += 1) originalDocument.addPage([612, 792]);
+  const original = Buffer.from(await originalDocument.save());
+  const request = {
+    signedAt: new Date("2026-09-10T12:00:00.000Z"),
+    representativeSignatureStrokes: [[[0, 0], [1, 1]]],
+    applicantSignatureStrokes: [[[0, 1], [1, 0]]],
+    representativeNameSnapshot: "Representative",
+    applicantNameSnapshot: "Client",
+  };
+  const fractions = {
+    representative: { x: 0.8, y: 0.8 },
+    applicant: { x: 0.8, y: 0.8 },
+  };
+
+  for (const [omitTarget, expectedCounts] of [["representative", [0, 1]], ["applicant", [1, 0]], ["all", [0, 0]]]) {
+    const preview = await renderSignedImm5476Signatures(original, request, fractions, { omitTarget });
+    const task = pdfjs.getDocument({ data: new Uint8Array(preview), enableXfa: true });
+    try {
+      const document = await task.promise;
+      const counts = [];
+      for (const pageNumber of [3, 4]) {
+        const page = await document.getPage(pageNumber);
+        counts.push((await page.getAnnotations({ intent: "display" })).filter((annotation) => String(annotation.subtype || "").toLowerCase() === "ink").length);
+      }
+      assert.deepEqual(counts, expectedCounts);
+    } finally {
+      await task.destroy().catch(() => {});
+    }
+  }
 });
 
 test("client IMM 5476 signing is draw-only and the backend creates the signed PDF", async () => {

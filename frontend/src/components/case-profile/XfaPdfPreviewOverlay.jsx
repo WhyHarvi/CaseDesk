@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 
-const SIGNATURE_ANNOTATION_ID = "pdfjs_internal_editor_casedesk-resizable-representative";
+const signatureAnnotationId = (target) => `pdfjs_internal_editor_casedesk-resizable-${target}`;
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -147,7 +147,7 @@ export default function XfaPdfPreviewOverlay({
   item,
   blob,
   autofill,
-  signatureEditor = null,
+  signatureEditors = [],
   readOnly = false,
   onSaveToCase,
   onSignatureTransformChange,
@@ -174,25 +174,25 @@ export default function XfaPdfPreviewOverlay({
   const [autosaveLabel, setAutosaveLabel] = useState("All changes saved");
   const [saveDialog, setSaveDialog] = useState(null);
   const [closeConfirm, setCloseConfirm] = useState(false);
-  const [signaturePageElement, setSignaturePageElement] = useState(null);
-  const [signaturePageSize, setSignaturePageSize] = useState(null);
-  const [signatureScales, setSignatureScales] = useState({ x: signatureEditor?.scaleX || 0.8, y: signatureEditor?.scaleY || 0.8 });
-  const [signatureSizeStatus, setSignatureSizeStatus] = useState("");
-  const signatureScalesRef = useRef({ x: signatureEditor?.scaleX || 0.8, y: signatureEditor?.scaleY || 0.8 });
+  const initialSignatureScales = Object.fromEntries(signatureEditors.map((editor) => [editor.target, { x: editor.scaleX || 0.8, y: editor.scaleY || 0.8 }]));
+  const [signaturePages, setSignaturePages] = useState({});
+  const [signatureScales, setSignatureScales] = useState(initialSignatureScales);
+  const [signatureSizeStatus, setSignatureSizeStatus] = useState({});
+  const signatureScalesRef = useRef(initialSignatureScales);
 
-  function changeSignatureScales(value) {
-    signatureScalesRef.current = value;
-    setSignatureScales(value);
+  function changeSignatureScales(target, value) {
+    signatureScalesRef.current = { ...signatureScalesRef.current, [target]: value };
+    setSignatureScales((current) => ({ ...current, [target]: value }));
   }
 
-  async function commitSignatureTransform() {
+  async function commitSignatureTransform(target) {
     if (!onSignatureTransformChange) return;
     try {
-      setSignatureSizeStatus("Saving size…");
-      await onSignatureTransformChange(signatureScalesRef.current);
-      setSignatureSizeStatus("Size saved");
+      setSignatureSizeStatus((current) => ({ ...current, [target]: "Saving size…" }));
+      await onSignatureTransformChange(target, signatureScalesRef.current[target]);
+      setSignatureSizeStatus((current) => ({ ...current, [target]: "Size saved" }));
     } catch (saveError) {
-      setSignatureSizeStatus("");
+      setSignatureSizeStatus((current) => ({ ...current, [target]: "" }));
       setError(saveError.response?.data?.message || saveError.message || "The signature size could not be saved.");
     }
   }
@@ -229,18 +229,18 @@ export default function XfaPdfPreviewOverlay({
           // Jump straight to whichever page holds the signature being
           // resized — the representative's and applicant's boxes sit on
           // different pages, and neither reliably pre-renders on load.
-          if (signatureEditor) pdfViewer.currentPageNumber = signatureEditor.pageIndex + 1;
+          if (signatureEditors.length) pdfViewer.currentPageNumber = signatureEditors[0].pageIndex + 1;
           setLoading(false);
         });
         eventBus.on("pagechanging", ({ pageNumber }) => setPage(pageNumber));
         eventBus.on("pagerendered", async ({ pageNumber }) => {
-          if (!signatureEditor || pageNumber !== signatureEditor.pageIndex + 1) return;
-          const pageView = pdfViewer.getPageView(signatureEditor.pageIndex);
+          const editors = signatureEditors.filter((editor) => pageNumber === editor.pageIndex + 1);
+          if (!editors.length) return;
+          const pageView = pdfViewer.getPageView(pageNumber - 1);
           const pdfPage = await pdfDocumentRef.current?.getPage(pageNumber);
           if (!active || !pageView?.div || !pdfPage) return;
           const [, , width, height] = pdfPage.view;
-          setSignaturePageSize({ width, height });
-          setSignaturePageElement(pageView.div);
+          setSignaturePages((current) => ({ ...current, [pageNumber - 1]: { element: pageView.div, size: { width, height } } }));
         });
         const loadingTask = pdfjs.getDocument({
           data: new Uint8Array(await blob.arrayBuffer()),
@@ -263,8 +263,8 @@ export default function XfaPdfPreviewOverlay({
           });
           applied += 1;
         }
-        if (signatureEditor) {
-          pdfDocument.annotationStorage.setValue(SIGNATURE_ANNOTATION_ID, signatureAnnotation(pdfjs, signatureEditor, signatureScalesRef.current));
+        for (const editor of signatureEditors) {
+          pdfDocument.annotationStorage.setValue(signatureAnnotationId(editor.target), signatureAnnotation(pdfjs, editor, signatureScalesRef.current[editor.target]));
         }
         pdfDocument.annotationStorage.resetModified();
         pdfDocument.annotationStorage.onSetModified = readOnly
@@ -298,18 +298,19 @@ export default function XfaPdfPreviewOverlay({
       pdfViewerRef.current = null;
       pdfDocumentRef.current = null;
       pdfjsRef.current = null;
-      setSignaturePageElement(null);
-      setSignaturePageSize(null);
+      setSignaturePages({});
     };
-  }, [blob, readOnly, signatureEditor]);
+  }, [blob, readOnly, signatureEditors]);
 
   useEffect(() => {
-    if (!signatureEditor || !pdfDocumentRef.current || !pdfjsRef.current) return;
-    pdfDocumentRef.current.annotationStorage.setValue(
-      SIGNATURE_ANNOTATION_ID,
-      signatureAnnotation(pdfjsRef.current, signatureEditor, signatureScales),
-    );
-  }, [signatureEditor, signatureScales]);
+    if (!pdfDocumentRef.current || !pdfjsRef.current) return;
+    for (const editor of signatureEditors) {
+      pdfDocumentRef.current.annotationStorage.setValue(
+        signatureAnnotationId(editor.target),
+        signatureAnnotation(pdfjsRef.current, editor, signatureScales[editor.target]),
+      );
+    }
+  }, [signatureEditors, signatureScales]);
 
   function changePage(offset) {
     const viewer = pdfViewerRef.current;
@@ -318,6 +319,10 @@ export default function XfaPdfPreviewOverlay({
       1,
       Math.min(pageCount, viewer.currentPageNumber + offset),
     );
+  }
+
+  function goToSignature(editor) {
+    if (pdfViewerRef.current) pdfViewerRef.current.currentPageNumber = editor.pageIndex + 1;
   }
 
   function zoom(direction) {
@@ -559,10 +564,22 @@ export default function XfaPdfPreviewOverlay({
           {autofill.warnings.join(" ")}
         </div>
       ) : null}
-      {signatureEditor ? (
-        <div className="flex items-center justify-between gap-3 border-b border-sky-100 bg-sky-50 px-4 py-2 text-[11px] text-sky-900">
-          <span><strong>Resize {signatureEditor.signerName ? `${signatureEditor.signerName}'s` : "the"} signature:</strong> drag side handles for width, top or bottom handles for height, or a corner for both. Hold Shift on a corner to keep proportions.</span>
-          <span className="shrink-0 font-semibold tabular-nums text-sky-700">{signatureSizeStatus || `W ${Math.round(signatureScales.x * 100)}% · H ${Math.round(signatureScales.y * 100)}%`}</span>
+      {signatureEditors.length ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-100 bg-sky-50 px-4 py-2 text-[11px] text-sky-900">
+          <span><strong>Signatures are editable in the form:</strong> go to a signature page and drag its blue handles. Side handles change width, top or bottom handles change height, and corners change both.</span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {signatureEditors.map((editor) => (
+              <button
+                key={editor.target}
+                type="button"
+                onClick={() => goToSignature(editor)}
+                className={`rounded-full border px-2.5 py-1 font-semibold transition ${page === editor.pageIndex + 1 ? "border-sky-600 bg-sky-600 text-white" : "border-sky-200 bg-white text-sky-700 hover:border-sky-400"}`}
+              >
+                {editor.target === "applicant" ? "Client signature" : "Representative signature"} · page {editor.pageIndex + 1}
+              </button>
+            ))}
+            {Object.values(signatureSizeStatus).find(Boolean) ? <span className="ml-1 font-semibold text-sky-700">{Object.values(signatureSizeStatus).find(Boolean)}</span> : null}
+          </div>
         </div>
       ) : null}
       {savedMessage ? (
@@ -602,18 +619,22 @@ export default function XfaPdfPreviewOverlay({
         <div ref={containerRef} className="absolute inset-0 overflow-auto">
           <div ref={viewerRef} className="pdfViewer" />
         </div>
-        {signatureEditor && signaturePageElement && signaturePageSize
-          ? createPortal(
-              <SignatureResizeLayer
-                editor={signatureEditor}
-                pageSize={signaturePageSize}
-                scales={signatureScales}
-                onScales={changeSignatureScales}
-                onCommit={commitSignatureTransform}
-              />,
-              signaturePageElement,
-            )
-          : null}
+        {signatureEditors.map((editor) => {
+          const page = signaturePages[editor.pageIndex];
+          const scales = signatureScales[editor.target];
+          if (!page || !scales) return null;
+          return createPortal(
+            <SignatureResizeLayer
+              key={editor.target}
+              editor={editor}
+              pageSize={page.size}
+              scales={scales}
+              onScales={(value) => changeSignatureScales(editor.target, value)}
+              onCommit={() => commitSignatureTransform(editor.target)}
+            />,
+            page.element,
+          );
+        })}
       </div>
       {saveDialog ? (
         <div className="absolute inset-0 z-20 grid place-items-center bg-slate-950/25 p-4 backdrop-blur-sm">

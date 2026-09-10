@@ -143,6 +143,112 @@ export async function createSignedImm5476Copy({ request, applicantStrokes, appli
   }
 }
 
+async function signedRequestFor(formId) {
+  const request = await prisma.caseFormSignatureRequest.findFirst({
+    where: { caseFormId: formId, status: "Signed" },
+    orderBy: { signedAt: "desc" },
+  });
+  if (!request?.applicantSignatureStrokes) {
+    throw createHttpError(409, "No signed client signature was found on this form to adjust.");
+  }
+  return request;
+}
+
+async function cleanPreSignatureSource(form) {
+  const lastUnsigned = await prisma.caseFormVersion.findFirst({
+    where: { caseFormId: form.id, agencyId: form.agencyId, copyType: { notIn: ["ClientSigned", "Finalized"] } },
+    orderBy: { versionNumber: "desc" },
+    select: { storageKey: true },
+  });
+  if (!lastUnsigned?.storageKey) throw createHttpError(409, "The filled copy of this form is required to adjust its signatures.");
+  const source = await downloadStorageFile(DOCUMENT_BUCKET, lastUnsigned.storageKey, { allowMissing: true });
+  if (!source) throw createHttpError(409, "The filled IMM 5476 copy is not available.");
+
+  // A Filled version commonly already contains the representative's ink.
+  // Delete only the two signature-box ink annotations in-place. Rebuilding
+  // the whole form from Original would also discard radio selections that
+  // PDF.js cannot safely infer from a shared XFA group. Targeted deletion
+  // preserves every form answer while making resizing a replacement.
+  return stripImm5476SignatureInk(source);
+}
+
+async function signatureFractions(form, agencyScale, target, scaleX, scaleY) {
+  return {
+    representative: {
+      x: resolveSignatureFillFraction(target === "representative" ? scaleX : (form.signatureScaleX ?? form.signatureScale ?? agencyScale)),
+      y: resolveSignatureFillFraction(target === "representative" ? scaleY : (form.signatureScaleY ?? form.signatureScale ?? agencyScale)),
+    },
+    applicant: {
+      x: resolveSignatureFillFraction(target === "applicant" ? scaleX : (form.applicantSignatureScaleX ?? agencyScale)),
+      y: resolveSignatureFillFraction(target === "applicant" ? scaleY : (form.applicantSignatureScaleY ?? agencyScale)),
+    },
+  };
+}
+
+export async function renderSignedImm5476Signatures(source, request, fractions, { omitTarget = null } = {}) {
+  const task = pdfjs.getDocument({ data: new Uint8Array(source), enableXfa: true });
+  try {
+    const document = await task.promise;
+    const signedDate = (request.signedAt || request.consentedAt || new Date()).toISOString().slice(0, 10);
+    await applyFieldValues(document, [["547R", true]]);
+    document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
+    document.annotationStorage.setValue(APPLICANT_SIGNATURE.dateFieldId, { value: signedDate });
+    if (omitTarget !== "representative" && omitTarget !== "all") {
+      document.annotationStorage.setValue(
+        `pdfjs_internal_editor_casedesk-representative-${randomUUID()}`,
+        signatureAnnotation(request.representativeSignatureStrokes, REPRESENTATIVE_SIGNATURE, request.representativeNameSnapshot, fractions.representative),
+      );
+    }
+    if (omitTarget !== "applicant" && omitTarget !== "all") {
+      document.annotationStorage.setValue(
+        `pdfjs_internal_editor_casedesk-applicant-${randomUUID()}`,
+        signatureAnnotation(request.applicantSignatureStrokes, APPLICANT_SIGNATURE, request.applicantNameSnapshot, fractions.applicant),
+      );
+    }
+    return Buffer.from(await document.saveDocument());
+  } finally {
+    await task.destroy().catch(() => {});
+  }
+}
+
+export async function stripImm5476SignatureInk(source) {
+  const task = pdfjs.getDocument({ data: new Uint8Array(source), enableXfa: true });
+  try {
+    const document = await task.promise;
+    let deleted = 0;
+    for (const [targetName, target] of [["representative", REPRESENTATIVE_SIGNATURE], ["applicant", APPLICANT_SIGNATURE]]) {
+      const page = await document.getPage(target.pageIndex + 1);
+      const annotations = await page.getAnnotations({ intent: "display" });
+      const [left, bottom, right, top] = target.rect;
+      for (const annotation of annotations) {
+        if (String(annotation?.subtype || "").toLowerCase() !== "ink" || !annotation.id || !Array.isArray(annotation.rect)) continue;
+        const [annotationLeft, annotationBottom, annotationRight, annotationTop] = annotation.rect;
+        if (!(annotationLeft < right && annotationRight > left && annotationBottom < top && annotationTop > bottom)) continue;
+        document.annotationStorage.setValue(`pdfjs_internal_editor_casedesk-delete-${targetName}-${deleted}`, {
+          id: annotation.id,
+          deleted: true,
+          pageIndex: target.pageIndex,
+          popupRef: annotation.popupRef || "",
+        });
+        deleted += 1;
+      }
+    }
+    return deleted ? Buffer.from(await document.saveDocument()) : Buffer.from(source);
+  } finally {
+    await task.destroy().catch(() => {});
+  }
+}
+
+export async function createImm5476SignatureEditorPreview({ form, target }) {
+  const [request, source, agency] = await Promise.all([
+    signedRequestFor(form.id),
+    cleanPreSignatureSource(form),
+    prisma.agency.findUnique({ where: { id: form.agencyId }, select: { governmentFormSignatureScale: true } }),
+  ]);
+  const fractions = await signatureFractions(form, agency?.governmentFormSignatureScale, target);
+  return renderSignedImm5476Signatures(source, request, fractions, { omitTarget: target });
+}
+
 // Adjusting a signature's size/placement after the fact — for either the
 // representative or the applicant, and whether or not the form has already
 // been client-signed. A signed copy's ink is baked into the actual stored
@@ -156,55 +262,17 @@ export async function createSignedImm5476Copy({ request, applicantStrokes, appli
 // source here is guaranteed to be the clean, pre-signature copy — neither
 // mark exists on it yet.
 export async function regenerateSignedImm5476Copy({ form, target, scaleX, scaleY, actorUserId, include }) {
-  const request = await prisma.caseFormSignatureRequest.findFirst({
-    where: { caseFormId: form.id, status: "Signed" },
-    orderBy: { signedAt: "desc" },
-  });
-  if (!request?.applicantSignatureStrokes) {
-    throw createHttpError(409, "No signed client signature was found on this form to adjust.");
-  }
-  const lastUnsigned = await prisma.caseFormVersion.findFirst({
-    where: { caseFormId: form.id, copyType: { notIn: ["ClientSigned", "Finalized"] } },
-    orderBy: { versionNumber: "desc" },
-    select: { storageKey: true },
-  });
-  if (!lastUnsigned) throw createHttpError(409, "The original filled copy of this form is no longer available.");
-  const source = await downloadStorageFile(DOCUMENT_BUCKET, lastUnsigned.storageKey, { allowMissing: true });
-  if (!source) throw createHttpError(409, "The filled IMM 5476 copy is not available.");
-
-  const agency = await prisma.agency.findUnique({ where: { id: form.agencyId }, select: { governmentFormSignatureScale: true } });
-  const representativeFraction = {
-    x: resolveSignatureFillFraction(target === "representative" ? scaleX : (form.signatureScaleX ?? form.signatureScale ?? agency?.governmentFormSignatureScale)),
-    y: resolveSignatureFillFraction(target === "representative" ? scaleY : (form.signatureScaleY ?? form.signatureScale ?? agency?.governmentFormSignatureScale)),
-  };
-  const applicantFraction = {
-    x: resolveSignatureFillFraction(target === "applicant" ? scaleX : (form.applicantSignatureScaleX ?? agency?.governmentFormSignatureScale)),
-    y: resolveSignatureFillFraction(target === "applicant" ? scaleY : (form.applicantSignatureScaleY ?? agency?.governmentFormSignatureScale)),
-  };
-
-  const task = pdfjs.getDocument({ data: new Uint8Array(source), enableXfa: true });
+  const [request, source, agency] = await Promise.all([
+    signedRequestFor(form.id),
+    cleanPreSignatureSource(form),
+    prisma.agency.findUnique({ where: { id: form.agencyId }, select: { governmentFormSignatureScale: true } }),
+  ]);
+  const fractions = await signatureFractions(form, agency?.governmentFormSignatureScale, target, scaleX, scaleY);
   let signedBuffer;
   try {
-    const document = await task.promise;
-    // Adjusting a box's size doesn't re-date the signature — keep whatever
-    // day it was actually signed on, not today.
-    const signedDate = (request.signedAt || request.consentedAt || new Date()).toISOString().slice(0, 10);
-    await applyFieldValues(document, [["547R", true]]);
-    document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
-    document.annotationStorage.setValue(APPLICANT_SIGNATURE.dateFieldId, { value: signedDate });
-    document.annotationStorage.setValue(
-      `pdfjs_internal_editor_casedesk-representative-${randomUUID()}`,
-      signatureAnnotation(request.representativeSignatureStrokes, REPRESENTATIVE_SIGNATURE, request.representativeNameSnapshot, representativeFraction),
-    );
-    document.annotationStorage.setValue(
-      `pdfjs_internal_editor_casedesk-applicant-${randomUUID()}`,
-      signatureAnnotation(request.applicantSignatureStrokes, APPLICANT_SIGNATURE, request.applicantNameSnapshot, applicantFraction),
-    );
-    signedBuffer = Buffer.from(await document.saveDocument());
+    signedBuffer = await renderSignedImm5476Signatures(source, request, fractions);
   } catch (error) {
     throw createHttpError(500, `The signed IMM 5476 could not be regenerated: ${error.message}`);
-  } finally {
-    await task.destroy().catch(() => {});
   }
 
   const baseName = String(form.originalFilename || "IMM5476.pdf").replace(/\.pdf$/i, "").replace(/-client-signed$/i, "");
