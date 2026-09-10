@@ -67,6 +67,10 @@ test("a client can change the method on the same fully-unpaid QuickBooks invoice
   assert.match(portal, /Change payment method/);
   assert.match(portal, /Keep current method/);
   assert.match(portal, /changingInvoiceId === invoice\.id/);
+  assert.match(portalController, /baseAmount: money\(Number\(invoice\.subtotalAmount\) \+ Number\(invoice\.taxAmount\) - Number\(invoice\.discountAmount\)\)/);
+  assert.match(portal, /Number\(invoice\.baseAmount \?\? invoice\.balance\)/);
+  assert.doesNotMatch(portal, /const base = Number\(invoice\.balance\)/);
+  assert.match(portal, /Choosing another method replaces the current processing fee/);
 });
 
 test("configured processing rates stay visible and missing QuickBooks fee items are provisioned", async () => {

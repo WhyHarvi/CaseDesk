@@ -59,7 +59,10 @@ function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, 
   const [reference, setReference] = useState("");
   const [screenshot, setScreenshot] = useState(null);
   const [error, setError] = useState("");
-  const base = Number(invoice.balance);
+  // The current balance may already contain the previously selected method's
+  // processing fee. Every choice must instead preview from the invoice's
+  // immutable subtotal + tax - discount base so switching never compounds it.
+  const base = Number(invoice.baseAmount ?? invoice.balance);
   const cardTotal = base * (1 + Number(surchargeRates?.cardSurchargeRatePercent || 0) / 100);
   const bankTotal = base * (1 + Number(surchargeRates?.bankTransferFeeRatePercent || 0) / 100);
 
@@ -111,6 +114,11 @@ function ChoosePaymentMethod({ invoice, surchargeRates, instructions, currency, 
           {onCancel ? <button type="button" onClick={onCancel} disabled={submitting} className="min-h-11 shrink-0 border border-slate-300 px-3 text-xs font-semibold text-slate-700 transition hover:border-[#002FA7] hover:text-[#002FA7] disabled:opacity-50">Keep current method</button> : null}
         </div>
         <p className="mt-1 text-xs leading-5 text-slate-600">Online options open checkout. Interac, debit, and other methods are confirmed after you submit proof.</p>
+        <div className="mt-3 flex min-h-11 items-center justify-between gap-3 border border-slate-200 bg-[#F7F7F8] px-3">
+          <span className="text-[11px] font-medium text-slate-600">Fixed invoice amount</span>
+          <span className="text-sm font-semibold tabular-nums text-slate-950">{formatMoney(base, currency)}</span>
+        </div>
+        {onCancel ? <p className="mt-2 text-[11px] leading-4 text-slate-500">Choosing another method replaces the current processing fee. It is never added on top of the current total.</p> : null}
       </div>
       <div className="divide-y divide-slate-300">
         {PAYMENT_METHOD_ROWS.map((item, index) => {

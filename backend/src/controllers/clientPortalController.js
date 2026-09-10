@@ -627,6 +627,7 @@ export async function getPortalPayments(req, res) {
         invoiceNumber: invoice.invoiceNumber || invoice.qbInvoiceNumber,
         amount: money(invoice.amount),
         balance: money(invoice.balance),
+        baseAmount: money(Number(invoice.subtotalAmount) + Number(invoice.taxAmount) - Number(invoice.discountAmount)),
         status: invoice.status,
         refundedAmount: money((invoice.refunds || []).filter((refund) => refund.status === "Completed").reduce((sum, refund) => sum + Number(refund.amount), 0)),
         dueDate: invoice.dueDate,
