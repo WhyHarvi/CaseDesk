@@ -123,16 +123,16 @@ const workspaceTabDestinations = {
 // (not built from a color-name variable) since the JIT scanner only picks
 // up classes it can see written out literally in the source.
 const workspaceTabVisuals = {
-  PROFILE: { icon: UserRound, active: "text-sky-700", bar: "bg-sky-500", idle: "text-sky-300" },
-  REMINDERS: { icon: BellRing, active: "text-amber-700", bar: "bg-amber-500", idle: "text-amber-300" },
-  QUESTIONNAIRES: { icon: ClipboardList, active: "text-violet-700", bar: "bg-violet-500", idle: "text-violet-300" },
-  DOCUMENTS: { icon: FolderLock, active: "text-indigo-700", bar: "bg-indigo-500", idle: "text-indigo-300" },
-  FORMS: { icon: FileText, active: "text-cyan-700", bar: "bg-cyan-500", idle: "text-cyan-300" },
-  TASKS: { icon: CheckCircle2, active: "text-emerald-700", bar: "bg-emerald-500", idle: "text-emerald-300" },
-  "AGREEMENTS & LETTERS": { icon: FileSignature, active: "text-fuchsia-700", bar: "bg-fuchsia-500", idle: "text-fuchsia-300" },
-  APPOINTMENTS: { icon: CalendarClock, active: "text-orange-700", bar: "bg-orange-500", idle: "text-orange-300" },
-  COMMUNICATION: { icon: MessageCircle, active: "text-teal-700", bar: "bg-teal-500", idle: "text-teal-300" },
-  BILLING: { icon: WalletCards, active: "text-rose-700", bar: "bg-rose-500", idle: "text-rose-300" },
+  PROFILE: { icon: UserRound, active: "text-sky-700", bar: "bg-sky-500", idle: "text-sky-500", idleText: "text-sky-800/70", hoverText: "hover:text-sky-700" },
+  REMINDERS: { icon: BellRing, active: "text-amber-700", bar: "bg-amber-500", idle: "text-amber-500", idleText: "text-amber-800/70", hoverText: "hover:text-amber-700" },
+  QUESTIONNAIRES: { icon: ClipboardList, active: "text-violet-700", bar: "bg-violet-500", idle: "text-violet-500", idleText: "text-violet-800/70", hoverText: "hover:text-violet-700" },
+  DOCUMENTS: { icon: FolderLock, active: "text-indigo-700", bar: "bg-indigo-500", idle: "text-indigo-500", idleText: "text-indigo-800/70", hoverText: "hover:text-indigo-700" },
+  FORMS: { icon: FileText, active: "text-cyan-700", bar: "bg-cyan-500", idle: "text-cyan-500", idleText: "text-cyan-800/70", hoverText: "hover:text-cyan-700" },
+  TASKS: { icon: CheckCircle2, active: "text-emerald-700", bar: "bg-emerald-500", idle: "text-emerald-500", idleText: "text-emerald-800/70", hoverText: "hover:text-emerald-700" },
+  "AGREEMENTS & LETTERS": { icon: FileSignature, active: "text-fuchsia-700", bar: "bg-fuchsia-500", idle: "text-fuchsia-500", idleText: "text-fuchsia-800/70", hoverText: "hover:text-fuchsia-700" },
+  APPOINTMENTS: { icon: CalendarClock, active: "text-orange-700", bar: "bg-orange-500", idle: "text-orange-500", idleText: "text-orange-800/70", hoverText: "hover:text-orange-700" },
+  COMMUNICATION: { icon: MessageCircle, active: "text-teal-700", bar: "bg-teal-500", idle: "text-teal-500", idleText: "text-teal-800/70", hoverText: "hover:text-teal-700" },
+  BILLING: { icon: WalletCards, active: "text-rose-700", bar: "bg-rose-500", idle: "text-rose-500", idleText: "text-rose-800/70", hoverText: "hover:text-rose-700" },
 };
 
 const workspaceTabFromSlug = (slug, availableTabs = caseWorkspaceTabs) =>
@@ -3932,7 +3932,7 @@ export default function CaseWorkspaceTabs({
                 className={`relative flex min-w-max items-center gap-1.5 rounded-t-[1rem] px-4 py-2.5 text-[11px] font-semibold tracking-[0.08em] transition ${
                   isActive
                     ? `bg-white ${visuals?.active || "text-slate-950"} shadow-[0_-1px_0_rgba(255,255,255,0.9),0_10px_28px_rgba(15,23,42,0.08)]`
-                    : "text-slate-500 hover:bg-white/50 hover:text-slate-800"
+                    : `${visuals?.idleText || "text-slate-500"} hover:bg-white/60 ${visuals?.hoverText || "hover:text-slate-800"}`
                 }`}
               >
                 {TabIcon ? (
