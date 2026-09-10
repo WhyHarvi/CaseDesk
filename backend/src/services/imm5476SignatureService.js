@@ -20,13 +20,14 @@ export async function createSignedImm5476Copy({ request, applicantStrokes, appli
   }
   // A request created while resigning (form.currentCopyType already
   // "ClientSigned") intentionally points sourceStorageKey at the last
-  // representative-signed-only "Filled" copy, not at form.storageKey — see
-  // sendFormSignatureRequest. So "has the form changed since this request
-  // was sent" has to compare against that same Filled version here, not
-  // against form.storageKey, or every resend would look stale.
+  // pre-signature copy (not necessarily "Filled" — see the matching comment
+  // in sendFormSignatureRequest), not at form.storageKey. So "has the form
+  // changed since this request was sent" has to compare against that same
+  // version here, not against form.storageKey, or every resend would look
+  // stale.
   const currentSource = form.currentCopyType === "ClientSigned"
     ? await prisma.caseFormVersion.findFirst({
-        where: { caseFormId: form.id, copyType: "Filled" },
+        where: { caseFormId: form.id, copyType: { notIn: ["ClientSigned", "Finalized"] } },
         orderBy: { versionNumber: "desc" },
         select: { storageKey: true, fileHash: true },
       })

@@ -85,19 +85,24 @@ export async function sendFormSignatureRequest(req, res) {
   // guard that correctly stops the representative's mark from being drawn
   // twice) and the client's new signature never actually lands on the PDF,
   // even though the database record moves on to it. A fresh request always
-  // has to source from the last representative-signed-only copy instead, so
-  // there's nothing but a blank applicant box for the new signature to land in.
+  // has to source from the last pre-signature copy instead, so there's
+  // nothing but a blank applicant box for the new signature to land in.
+  // That pre-signature copy isn't necessarily "Filled" — a form sent for its
+  // first-ever signature can just as validly still be "Working" (a manually
+  // uploaded replacement rather than one generated from the checklist), so
+  // this looks for the latest version that isn't itself a signed copy,
+  // rather than assuming one specific copyType.
   let sourceStorageKey = form.storageKey;
   let sourceFileHash = form.fileHash;
   if (form.currentCopyType === "ClientSigned") {
-    const lastFilled = await prisma.caseFormVersion.findFirst({
-      where: { caseFormId: form.id, agencyId: form.agencyId, copyType: "Filled" },
+    const lastUnsigned = await prisma.caseFormVersion.findFirst({
+      where: { caseFormId: form.id, agencyId: form.agencyId, copyType: { notIn: ["ClientSigned", "Finalized"] } },
       orderBy: { versionNumber: "desc" },
       select: { storageKey: true, fileHash: true },
     });
-    if (!lastFilled) throw createHttpError(409, "Generate a filled copy of this form again before requesting a new signature.");
-    sourceStorageKey = lastFilled.storageKey;
-    sourceFileHash = lastFilled.fileHash;
+    if (!lastUnsigned) throw createHttpError(409, "Generate a filled copy of this form again before requesting a new signature.");
+    sourceStorageKey = lastUnsigned.storageKey;
+    sourceFileHash = lastUnsigned.fileHash;
   }
   const message = req.body?.message ? String(req.body.message).trim().slice(0, 1000) : null;
   const data = await prisma.$transaction(async (tx) => {
