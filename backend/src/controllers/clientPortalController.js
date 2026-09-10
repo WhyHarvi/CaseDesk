@@ -768,13 +768,12 @@ export async function downloadPortalInvoicePdf(req, res) {
   res.send(buffer);
 }
 
-// The client's own step in the credit-card/bank-transfer surcharge flow —
-// an installment invoiced automatically has no one present to ask "how
-// will you pay?" (see fireInstallment's deferMethodChoice), so it lands
-// here in AwaitingPaymentMethod status until the client picks. Ownership is
-// checked here (clientId must match this portal session) before handing
-// off to finalizeAwaitingPaymentMethodInvoice, which re-checks status and
-// does the actual QuickBooks work. See
+// The client's own step in the credit-card/bank-transfer surcharge flow.
+// Staff-created invoices and automatically fired installments both land in
+// AwaitingPaymentMethod until the client picks. Ownership is checked here
+// (clientId must match this portal session) before handing off to
+// finalizeAwaitingPaymentMethodInvoice, which re-checks status and does the
+// actual QuickBooks work. See
 // docs/Decisions/Credit Card Surcharge Proposal.md.
 export async function choosePortalInvoicePaymentMethod(req, res) {
   const link = await linkedClient(req);

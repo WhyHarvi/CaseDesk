@@ -522,7 +522,7 @@ export async function finalizeAwaitingPaymentMethodInvoice(agencyId, { invoiceId
   return updated;
 }
 
-export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, discountAmount = 0, dueDate, actorUserId, idempotencyKey = null, notifyClient = true, accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS, onlineMethod = null }) {
+export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, discountAmount = 0, dueDate, actorUserId, idempotencyKey = null, notifyClient = true, accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS, onlineMethod = null, deferMethodChoice = false }) {
   if (onlineMethod !== null && onlineMethod !== "card" && onlineMethod !== "bankTransfer") {
     throw createHttpError(400, "paymentMethod must be \"card\", \"bankTransfer\", or omitted.", "VALIDATION_ERROR");
   }
@@ -560,9 +560,11 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     idempotencyKey: operationKey,
     accountingProvider,
     onlineMethod: accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS ? onlineMethod : null,
+    deferMethodChoice: accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS && deferMethodChoice,
   });
 
-  const methodNote = onlineMethod === "card" ? " (client paying by credit card, surcharge applied)"
+  const methodNote = deferMethodChoice ? " (awaiting client's online payment method)"
+    : onlineMethod === "card" ? " (client paying by credit card, surcharge applied)"
     : onlineMethod === "bankTransfer" ? " (client paying by bank transfer, fee applied)"
     : "";
   await recordActivity({
@@ -897,7 +899,9 @@ export async function voidUnpaidCaseInvoice(agencyId, { caseId, invoiceId, reaso
     throw createHttpError(409, "This invoice already has a payment. Refund or reverse the payment before voiding it.", "INVOICE_HAS_PAYMENT");
   }
 
-  if (invoice.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS) {
+  // AwaitingPaymentMethod is a local placeholder: no QuickBooks invoice
+  // exists yet, so it can be voided locally without a provider call.
+  if (invoice.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS && invoice.status !== "AwaitingPaymentMethod") {
     if (!invoice.qbInvoiceId || !invoice.qbSyncToken) {
       throw createHttpError(409, "This QuickBooks invoice must be synchronized before it can be voided.", "QBO_INVOICE_NOT_SYNCED");
     }

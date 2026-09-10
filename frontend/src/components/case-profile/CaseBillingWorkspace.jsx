@@ -4,43 +4,22 @@ import {
   Banknote,
   Check,
   Copy,
-  CreditCard,
   Download,
   Landmark,
   Loader2,
   Plus,
   Receipt,
   Trash2,
-  Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment, requestCaseInvoiceRefund, voidCaseInvoice, voidCaseInvoicePayment } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
-import { getQuickBooksMapping } from "../../api/quickbooksApi";
 import { voidInstallmentInvoice } from "../../api/paymentScheduleApi";
 import ClientManualBillingEntrySheet from "../clients/ClientManualBillingEntrySheet";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
-import { useScheduleTaxContext } from "./CasePaymentScheduleWorkspace";
-import { TAXABLE_KINDS } from "../payments/InstallmentListEditor";
-
-// Bank transfer / credit card go through QuickBooks' hosted payment page and
-// carry their own passed-through processing fee (2.4%/1% by default,
-// admin-configurable in Settings) — "Other" covers every existing manual
-// method (cash, e-transfer, cheque, wire, debit), which never touches that
-// page and stays fee-free. See docs/Decisions/Credit Card Surcharge
-// Proposal.md.
-const PAYMENT_METHOD_OPTIONS = [
-  { value: "other", label: "Other", hint: "Cash, e-transfer, cheque, wire, debit", icon: Banknote },
-  { value: "bankTransfer", label: "Bank transfer", hint: "QuickBooks hosted payment", icon: Wallet },
-  { value: "card", label: "Credit card", hint: "QuickBooks hosted payment", icon: CreditCard },
-];
-
-function money(value) {
-  return Math.round(Number(value || 0) * 100) / 100;
-}
 
 // Payment-type tints are a category, not a status — kept in a separate blue
 // / orange pair so they never share a hue with the STATUS_TONE badges below.
@@ -200,7 +179,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
   const baseMeta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
   const meta = { ...baseMeta, label: invoice.paymentTypeLabel || category?.name || baseMeta.label };
   const Icon = meta.icon;
-  const payable = canRecordPayment && Number(invoice.balance) > 0;
+  const payable = canRecordPayment && Number(invoice.balance) > 0 && invoice.status !== "AwaitingPaymentMethod";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
@@ -346,16 +325,18 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
               {linkCopied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={download}
-            disabled={downloading}
-            aria-label="Download invoice PDF"
-            title="Download PDF"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-          >
-            {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-          </button>
+          {invoice.status !== "AwaitingPaymentMethod" ? (
+            <button
+              type="button"
+              onClick={download}
+              disabled={downloading}
+              aria-label="Download invoice PDF"
+              title="Download PDF"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            >
+              {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -365,6 +346,12 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
           <span className="text-slate-500">Balance <span className={`font-semibold ${Number(invoice.balance) > 0 ? "text-slate-900" : "text-emerald-700"}`}>{formatMoney(invoice.balance)}</span></span>
         </div>
       </div>
+
+      {invoice.status === "AwaitingPaymentMethod" ? (
+        <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+          This is the base amount. The final QuickBooks invoice will be created after the client chooses credit card or bank transfer in the portal.
+        </p>
+      ) : null}
 
       {downloadError ? <p className="mt-2 text-xs text-rose-600">{downloadError}</p> : null}
 
@@ -430,12 +417,9 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [discountAmount, setDiscountAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("other");
-  const [surchargeRates, setSurchargeRates] = useState({ cardSurchargeRatePercent: 2.4, bankTransferFeeRatePercent: 1 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [errorHint, setErrorHint] = useState("");
-  const { feeKindByType, taxRatePercent } = useScheduleTaxContext();
 
   useEffect(() => {
     if (open) {
@@ -444,39 +428,10 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
       setAmount("");
       setDueDate("");
       setDiscountAmount("");
-      setPaymentMethod("other");
       setError("");
       setErrorHint("");
-      getQuickBooksMapping()
-        .then((mapping) => {
-          if (mapping?.cardSurchargeRatePercent != null) {
-            setSurchargeRates({
-              cardSurchargeRatePercent: Number(mapping.cardSurchargeRatePercent),
-              bankTransferFeeRatePercent: Number(mapping.bankTransferFeeRatePercent),
-            });
-          }
-        })
-        .catch(() => {});
     }
   }, [open]);
-
-  // Preview only — the backend recomputes and enforces the real total
-  // (including the Quebec surcharge exclusion, which this preview can't
-  // know about without the client's province). Matches the same tax-kind
-  // lookup the payment-schedule builder already uses.
-  const totals = useMemo(() => {
-    const subtotal = Number(amount) || 0;
-    const discount = Number(discountAmount) || 0;
-    const kind = feeKindByType.get(paymentType) ?? (paymentType === "disbursement" ? "Government" : "Professional");
-    const taxable = TAXABLE_KINDS.has(kind);
-    const taxAmount = taxable ? money((subtotal * taxRatePercent) / 100) : 0;
-    const base = money(subtotal + taxAmount - discount);
-    return {
-      other: base,
-      bankTransfer: money(base * (1 + surchargeRates.bankTransferFeeRatePercent / 100)),
-      card: money(base * (1 + surchargeRates.cardSurchargeRatePercent / 100)),
-    };
-  }, [amount, discountAmount, paymentType, feeKindByType, taxRatePercent, surchargeRates]);
 
   async function submit(event) {
     event.preventDefault();
@@ -484,7 +439,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
     setError("");
     setErrorHint("");
     try {
-      const created = await createCaseInvoice(caseId, { paymentType, description: description.trim(), amount: Number(amount), discountAmount: Number(discountAmount || 0), dueDate: dueDate || undefined, paymentMethod: paymentMethod === "other" ? undefined : paymentMethod });
+      const created = await createCaseInvoice(caseId, { paymentType, description: description.trim(), amount: Number(amount), discountAmount: Number(discountAmount || 0), dueDate: dueDate || undefined });
       onCreated(created);
       onClose();
     } catch (reason) {
@@ -543,34 +498,14 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
               </label>
 
               <p className="rounded-2xl bg-slate-50 px-3.5 py-2.5 text-xs leading-5 text-slate-500">
-                Enter the charge before tax. CaseDesk applies the agency tax rules, sends the same total to QuickBooks, and blocks the invoice if the totals do not match.
+                Enter the charge before tax. CaseDesk applies the agency tax rules now and sends the final total to QuickBooks after the client chooses how to pay.
               </p>
 
-              <div>
-                <p className="text-xs font-medium text-slate-600">How will the client pay?</p>
-                <div className="mt-1.5 space-y-2">
-                  {PAYMENT_METHOD_OPTIONS.map((option) => {
-                    const Icon = option.icon;
-                    const selected = paymentMethod === option.value;
-                    return (
-                      <button key={option.value} type="button" onClick={() => setPaymentMethod(option.value)} className={`flex w-full items-center justify-between gap-2 rounded-2xl border px-3.5 py-2.5 text-left text-xs font-semibold transition ${selected ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
-                        <span className="flex items-center gap-2">
-                          <Icon className="h-3.5 w-3.5 shrink-0" />
-                          <span>
-                            {option.label}
-                            <span className={`block text-[10px] font-normal ${selected ? "text-slate-300" : "text-slate-400"}`}>{option.hint}</span>
-                          </span>
-                        </span>
-                        <span className="shrink-0 tabular-nums">${totals[option.value].toFixed(2)}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {paymentMethod !== "other" ? (
-                  <p className="mt-1.5 text-[11px] leading-4 text-slate-500">
-                    Includes the {paymentMethod === "card" ? "credit card surcharge" : "bank transfer fee"} ({paymentMethod === "card" ? surchargeRates.cardSurchargeRatePercent : surchargeRates.bankTransferFeeRatePercent}%), passed on to the client. The QuickBooks invoice only accepts that one method. Skipped automatically for Quebec clients.
-                  </p>
-                ) : null}
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/70 px-3.5 py-3">
+                <p className="flex items-center gap-2 text-xs font-semibold text-sky-900"><Receipt className="h-3.5 w-3.5" /> Client chooses the online payment method</p>
+                <p className="mt-1.5 text-[11px] leading-4 text-sky-800/80">
+                  The client will choose credit card or bank transfer in the portal. CaseDesk then creates the final QuickBooks invoice, adds the applicable processing fee, and enables only the selected method.
+                </p>
               </div>
 
               {error ? (

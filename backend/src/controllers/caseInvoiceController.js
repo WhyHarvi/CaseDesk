@@ -16,10 +16,10 @@ export async function createInvoice(req, res) {
     discountAmount: req.body?.discountAmount,
     dueDate: req.body?.dueDate,
     actorUserId: req.auth.userId,
-    // "card" | "bankTransfer" | omitted — how the client already told
-    // staff they'll pay. Applies the matching surcharge and restricts the
-    // QuickBooks hosted page to that one method.
-    onlineMethod: req.body?.paymentMethod || null,
+    // Staff creates the base charge only. The client chooses card or bank
+    // transfer in the portal; that choice creates the real QuickBooks
+    // invoice with the matching fee and only that payment method enabled.
+    deferMethodChoice: true,
   });
   res.status(201).json({ data });
 }

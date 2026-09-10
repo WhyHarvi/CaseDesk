@@ -50,9 +50,8 @@ export function getPortalTimeline() {
 }
 
 // "method" is "card" | "bankTransfer" — see docs/Decisions/Credit Card
-// Surcharge Proposal.md. Only valid for an invoice currently
-// AwaitingPaymentMethod (fired automatically by a payment schedule, with no
-// one present to ask at generation time).
+// Surcharge Proposal.md. Valid for any invoice currently
+// AwaitingPaymentMethod, whether staff created it or a schedule fired it.
 export function choosePortalInvoicePaymentMethod(invoiceId, method) {
   return api.post(`/client-portal/payments/invoices/${invoiceId}/choose-method`, { method }).then((response) => response.data);
 }

@@ -20,10 +20,9 @@ const INVOICE_STATUS_TONE = {
 };
 const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Government fee" };
 
-// Only shown for an invoice CaseDesk invoiced automatically (a payment
-// schedule installment) with no one present to ask how the client will
-// pay — see fireInstallment's deferMethodChoice and
-// docs/Decisions/Credit Card Surcharge Proposal.md. Bank transfer and
+// Shown for any invoice awaiting the client's online payment choice,
+// including staff-created invoices and automatic payment-schedule
+// installments. Bank transfer and
 // credit card each carry their own disclosed fee, shown here before the
 // client commits; every other method (e-transfer, cheque, etc.) is handled
 // directly with the agency, outside CaseDesk.
@@ -228,7 +227,7 @@ export default function ClientPortalPayments() {
                       <span className={["rounded-full px-2.5 py-1 text-[10px] font-semibold", INVOICE_STATUS_TONE[invoice.status] || "bg-slate-100 text-slate-500"].join(" ")}>
                         {INVOICE_STATUS_LABEL[invoice.status] || invoice.status}
                       </span>
-                      <InvoiceDownloadButton invoice={invoice} />
+                      {invoice.status !== "AwaitingPaymentMethod" ? <InvoiceDownloadButton invoice={invoice} /> : null}
                     </div>
                   </li>
                 ))}
