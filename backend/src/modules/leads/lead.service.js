@@ -609,8 +609,8 @@ export async function updateLeadFollowUp(req, db = prisma) {
     const collaborator = req.auth.role === "consultant" && lead.ownerUserId !== actorId && existing.assignedUserId !== actorId
       ? await tx.leadCollaborator.findUnique({ where: { leadId_userId: { leadId: lead.id, userId: actorId } }, select: { id: true } })
       : null;
-    if (req.auth.role !== "admin" && lead.ownerUserId !== actorId && existing.assignedUserId !== actorId && !collaborator) {
-      throw createHttpError(403, "Only the assignee, lead owner, delegated collaborator, or an administrator can close this follow-up.", "FORBIDDEN");
+    if (!["admin", "manager"].includes(req.auth.role) && lead.ownerUserId !== actorId && existing.assignedUserId !== actorId && !collaborator) {
+      throw createHttpError(403, "Only the assignee, lead owner, delegated collaborator, or an administrator or manager can close this follow-up.", "FORBIDDEN");
     }
     if (existing.status !== "PENDING") throw createHttpError(409, "This lead follow-up is already closed.", "FOLLOW_UP_CLOSED");
     const followUp = await tx.leadFollowUp.update({ where: { id: existing.id }, data: { status: values.status, completionOutcome: values.completionOutcome, completedAt: new Date(), completedById: actorId } });

@@ -79,6 +79,7 @@ test("a durable collaborator can close the owner's overdue follow-ups without ta
     readFile(new URL("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx", import.meta.url), "utf8"),
   ]);
   assert.match(service, /leadCollaborator\.findUnique\(\{ where: \{ leadId_userId:/);
-  assert.match(service, /delegated collaborator, or an administrator can close this follow-up/);
+  assert.match(service, /delegated collaborator, or an administrator or manager can close this follow-up/);
+  assert.match(service, /!\["admin", "manager"\]\.includes\(req\.auth\.role\) && lead\.ownerUserId !== actorId && existing\.assignedUserId !== actorId && !collaborator/);
   assert.match(detailSheet, /\["admin", "manager"\]\.includes\(role\) \|\| ownsLead \|\| collaboratesOnLead \|\| item\.assignedUserId === appUser\?\.id/);
 });
