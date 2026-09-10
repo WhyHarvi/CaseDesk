@@ -16,9 +16,11 @@ CaseDesk delegates credential and session handling to [[Supabase]] Auth. The fro
 
 Invitations use `backend/src/middleware/invitationAuth.js`; workspace setup uses `backend/src/middleware/onboardingAuth.js`. Recovery, invite, temporary-password, and account operations live in `backend/src/routes/authRoutes.js`, `backend/src/controllers/authController.js`, and `backend/src/routes/onboardingRoutes.js`.
 
+Client-portal onboarding is intentionally separate from staff/workspace invitation redemption. The backend signs a seven-day token bound to the CaseDesk user and Supabase Auth identity. The browser fragment keeps that bearer token out of the initial page request; loading the page is read-only, and an explicit password submission performs the one-time activation. The account's transition from `invited` to `active` invalidates every outstanding onboarding link for that client.
+
 ## Configuration
 
-`SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`; frontend: `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The service-role key is backend-only.
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and optional dedicated `PORTAL_INVITE_SIGNING_KEY`; frontend: `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. Signing and service-role keys are backend-only.
 
 ## Depends On
 

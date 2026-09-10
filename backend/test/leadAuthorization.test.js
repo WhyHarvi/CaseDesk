@@ -51,13 +51,14 @@ test("stage, priority, and owner each have a real endpoint with the right role g
   assert.match(routes, /router\.patch\("\/:id\/stage", requireRole\("admin", "consultant", "manager"\), asyncHandler\(changeLeadStage\)\)/);
   assert.match(routes, /router\.patch\("\/:id\/priority", requireRole\("admin", "consultant", "manager"\), asyncHandler\(changeLeadPriority\)\)/);
 
-  // All three are inline selectors. Admin owner transfers save immediately
-  // without opening a reason form, while the API stays admin-only.
-  assert.match(leadDetail, /canReassign = isWorkable && role === "admin"/);
+  // All three are inline selectors. Admin/manager owner transfers save
+  // immediately without opening a reason form, while the API stays
+  // admin/manager oversight.
+  assert.match(leadDetail, /canReassign = isWorkable && \["admin", "manager"\]\.includes\(role\)/);
   assert.match(leadDetail, /canRequestTransfer = isWorkable && role === "consultant" && ownsLead/);
-  assert.match(leadDetail, /canEditWorkflow = isWorkable && \(role === "admin" \|\| \(role === "consultant" && ownsLead\)\)/);
+  assert.match(leadDetail, /canEditWorkflow = isWorkable && \(\["admin", "manager"\]\.includes\(role\) \|\| \(role === "consultant" && ownsLead\)\)/);
   assert.match(leadDetail, /leadOwners = staff\.filter/);
-  assert.match(leadDetail, /\["admin", "consultant", "frontdesk"\]\.includes\(person\.role\)/);
+  assert.match(leadDetail, /\["admin", "consultant", "frontdesk", "manager"\]\.includes\(person\.role\)/);
   assert.match(leadDetail, /select=\{canReassign \|\| canRequestTransfer \? \{/);
   assert.match(leadDetail, /api\.post\(`\/leads\/\$\{lead\.id\}\/assign`, \{\s*ownerUserId\s*\}\)/);
   assert.match(leadDetail, /api\.post\(`\/leads\/\$\{lead\.id\}\/transfer-requests`, \{ ownerUserId \}\)/);

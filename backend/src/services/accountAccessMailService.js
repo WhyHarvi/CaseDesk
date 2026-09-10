@@ -78,12 +78,16 @@ export function accountAccessEmailContent({
   audience = "client",
   supportEmail,
   brandImageUrl = null,
+  linkValidityDays = null,
 }) {
   const agencyName = agency?.legalName || agency?.name || "CaseDesk";
   const contactName = fullName || "there";
   const copy = COPY[audience]?.[kind] || COPY.client[kind];
   const subject = copy.subject(agencyName);
   const isTemporaryPassword = kind === "temporaryPassword";
+  const linkNotice = kind === "onboarding" && linkValidityDays === 7
+    ? "This secure onboarding link is valid for seven days and can be used only once."
+    : "For your security, use this link only once.";
   const buttonLabel = kind === "onboarding" ? "Set up my account" : kind === "retainer" ? "Review and sign" : isTemporaryPassword ? "Sign in" : "Reset my password";
   const phone = String(agency?.phone || "").trim();
   const email = String(supportEmail || agency?.email || "").trim();
@@ -108,7 +112,7 @@ export function accountAccessEmailContent({
       <tr><td style="padding:18px 34px 0"><a href="${escapeHtml(loginUrl)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(buttonLabel)} &nbsp;→</a></td></tr>
       <tr><td style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">You can change this password anytime once you're signed in. If you did not request this message, contact your case team.</p></td></tr>`
     : `<tr><td style="padding:18px 34px 0"><a href="${escapeHtml(actionLink)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(buttonLabel)} &nbsp;→</a></td></tr>
-      <tr><td style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">For your security, use this link only once. If you did not request this message, you can safely ignore it.</p></td></tr>`;
+      <tr><td style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">${escapeHtml(linkNotice)} If you did not request this message, you can safely ignore it.</p></td></tr>`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title></head>
@@ -151,7 +155,7 @@ export function accountAccessEmailContent({
         "",
         actionLink,
         "",
-        "For your security, use this link only once. If you did not request this message, you can safely ignore it.",
+        `${linkNotice} If you did not request this message, you can safely ignore it.`,
         "",
         agencyName,
         agencyContact || null,
@@ -166,7 +170,7 @@ export function accountAccessEmailContent({
 // connected mailbox and can silently fail). generateAuthLink() only ever
 // returns a link; nothing is emailed unless this function does it, via the
 // agency's own mail config.
-export async function sendAccountAccessEmail({ agencyId, email, fullName, actionLink, password, loginUrl, kind, audience = "client" }) {
+export async function sendAccountAccessEmail({ agencyId, email, fullName, actionLink, password, loginUrl, kind, audience = "client", linkValidityDays = null }) {
   const [agency, config] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, phone: true, email: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true } }),
     resolveAgencyMailConfig(agencyId),
@@ -193,6 +197,7 @@ export async function sendAccountAccessEmail({ agencyId, email, fullName, action
     audience,
     supportEmail: senderAddress(config.from) || agency?.email,
     brandImageUrl: avatarCid ? `cid:${avatarCid}` : safeWebUrl(agency?.logoUrl),
+    linkValidityDays,
   });
   const transport = createMailTransport(config);
   return transport.sendMail({

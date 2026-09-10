@@ -80,5 +80,5 @@ test("a durable collaborator can close the owner's overdue follow-ups without ta
   ]);
   assert.match(service, /leadCollaborator\.findUnique\(\{ where: \{ leadId_userId:/);
   assert.match(service, /delegated collaborator, or an administrator can close this follow-up/);
-  assert.match(detailSheet, /role === "admin" \|\| ownsLead \|\| collaboratesOnLead \|\| item\.assignedUserId === appUser\?\.id/);
+  assert.match(detailSheet, /\["admin", "manager"\]\.includes\(role\) \|\| ownsLead \|\| collaboratesOnLead \|\| item\.assignedUserId === appUser\?\.id/);
 });

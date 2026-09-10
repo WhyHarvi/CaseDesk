@@ -15,7 +15,23 @@ function hashBuffer(buffer) {
 // representative details, or any other field on the form.
 export async function createSignedImm5476Copy({ request, applicantStrokes, applicantSignatureImage, actorUserId, signerIp, signerUserAgent }) {
   const form = await prisma.caseForm.findUnique({ where: { id: request.caseFormId } });
-  if (!form?.storageKey || form.storageKey !== request.sourceStorageKey || (request.sourceFileHash && form.fileHash !== request.sourceFileHash)) {
+  if (!form?.storageKey) {
+    throw createHttpError(409, "This IMM 5476 changed after it was sent. Ask your consultant to review it and send a new signature request.");
+  }
+  // A request created while resigning (form.currentCopyType already
+  // "ClientSigned") intentionally points sourceStorageKey at the last
+  // representative-signed-only "Filled" copy, not at form.storageKey — see
+  // sendFormSignatureRequest. So "has the form changed since this request
+  // was sent" has to compare against that same Filled version here, not
+  // against form.storageKey, or every resend would look stale.
+  const currentSource = form.currentCopyType === "ClientSigned"
+    ? await prisma.caseFormVersion.findFirst({
+        where: { caseFormId: form.id, copyType: "Filled" },
+        orderBy: { versionNumber: "desc" },
+        select: { storageKey: true, fileHash: true },
+      })
+    : { storageKey: form.storageKey, fileHash: form.fileHash };
+  if (!currentSource?.storageKey || currentSource.storageKey !== request.sourceStorageKey || (request.sourceFileHash && currentSource.fileHash !== request.sourceFileHash)) {
     throw createHttpError(409, "This IMM 5476 changed after it was sent. Ask your consultant to review it and send a new signature request.");
   }
   const source = await downloadStorageFile(DOCUMENT_BUCKET, request.sourceStorageKey, { allowMissing: true });

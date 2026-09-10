@@ -1183,6 +1183,11 @@ export function consultationUpdateAccessWhere(req) {
     : { consultantUserId: req.auth.userId };
 }
 
+export function consultationOutcomeCanBeRecorded(status, startAt, now = new Date()) {
+  if (!["COMPLETED", "NO_SHOW"].includes(status)) return true;
+  return new Date(startAt).getTime() <= new Date(now).getTime();
+}
+
 export async function listConsultations(req) {
   await requireLead(prisma, req, req.params.id);
   return prisma.leadConsultation.findMany({
@@ -1344,6 +1349,9 @@ export async function updateConsultation(req, db = prisma) {
       },
     });
     if (!existing) throw createHttpError(404, "Consultation not found.", "CONSULTATION_NOT_FOUND");
+    if (!consultationOutcomeCanBeRecorded(values.status, existing.startAt)) {
+      throw createHttpError(409, "An upcoming consultation cannot be completed or marked as a no-show.", "CONSULTATION_NOT_STARTED");
+    }
     // The consultation query above proves the assigned consultant is allowed
     // to perform this specific action. Fetch the linked lead agency-safely,
     // without applying the unrelated lead-owner visibility scope again.
@@ -1487,9 +1495,9 @@ export async function updateCommercialStatus(req, db = prisma) {
 // outside the automated flow (see updateCommercialStatus's manual "Signed"
 // option) — there's otherwise no client/case to record the initial payment
 // against, and no way forward except marking it Waived even when a real
-// payment was collected. Same admin-or-owning-consultant gate as converting
-// the lead itself: this creates a real Client + Case, same consequential
-// write.
+// payment was collected. Same admin/manager-or-owning-consultant gate as
+// converting the lead itself: this creates a real Client + Case, same
+// consequential write.
 export async function createClientForPayment(req, db = prisma) {
   const lead = await requireLead(db, req, req.params.id);
   if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can do this.", "LEAD_NOT_OPEN");
@@ -1648,10 +1656,10 @@ export async function convertLead(req, db = prisma) {
   }
 
   // Converting creates both a client and a case assigned to this lead's
-  // owner. Keep that consequential write limited to the administrator or
-  // the consultant who actually owns the lead, even when a consultant has
-  // workspace-wide Lead visibility or can see the lead through an assigned
-  // follow-up. convertLeadCore re-validates everything else itself.
+  // owner. Keep that consequential write limited to an admin, a manager,
+  // or the consultant who actually owns the lead, even when a consultant
+  // has workspace-wide Lead visibility or can see the lead through an
+  // assigned follow-up. convertLeadCore re-validates everything else itself.
   const lead = await requireLead(db, req, req.params.id);
   assertLeadWorkflowEditable(req, lead);
   return convertLeadCore(agencyId, lead.id, { actorId: req.auth.userId, values }, db);

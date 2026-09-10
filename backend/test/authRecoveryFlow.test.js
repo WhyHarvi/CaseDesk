@@ -157,9 +157,13 @@ test("both portal onboarding/reset and public forgot-password pages use the shar
     readFile(new URL("../src/routes/authRoutes.js", import.meta.url), "utf8"),
   ]);
   assert.match(acceptInvite, /await establishAuthLinkSession\(\)/);
+  assert.match(acceptInvite, /invite_token/);
+  assert.match(acceptInvite, /\/auth\/client-invitation/);
+  assert.match(acceptInvite, /\/auth\/client-invitation\/accept/);
   assert.match(resetPassword, /establishAuthLinkSession\(\)/);
   assert.match(resetPassword, /Request a new reset link/);
-  assert.match(portalController, /type: kind/);
+  assert.match(portalController, /createClientPortalInviteToken/);
+  assert.match(portalController, /invite_token=/);
   assert.match(portalController, /auth\/accept-invite/);
   assert.match(portalController, /const isOnboarding =/);
   assert.match(supabaseService, /detectSessionInUrl: false/);
@@ -168,8 +172,12 @@ test("both portal onboarding/reset and public forgot-password pages use the shar
   assert.match(login, /api\.post\("\/auth\/forgot-password"/);
   assert.doesNotMatch(login, /resetPasswordForEmail/);
   assert.match(authController, /type: "recovery"/);
+  assert.match(authController, /onboarding && user\.role === "client"/);
+  assert.match(authController, /createClientPortalInviteToken/);
   assert.match(authController, /sendAccountAccessEmail/);
   assert.match(authController, /PASSWORD_RECOVERY_RESPONSE/);
   assert.match(authRoutes, /"\/forgot-password"/);
+  assert.match(authRoutes, /"\/client-invitation"/);
+  assert.match(authRoutes, /"\/client-invitation\/accept"/);
   assert.match(authRoutes, /identity: \(req\) => `email:/);
 });

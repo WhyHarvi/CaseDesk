@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { acceptMemberInvitation, changePassword, getAccessSnapshot, getInvitation, getMe, logout, requestPasswordRecovery } from "../controllers/authController.js";
+import { acceptClientPortalInvitation, acceptMemberInvitation, changePassword, getAccessSnapshot, getClientPortalInvitation, getInvitation, getMe, logout, requestPasswordRecovery } from "../controllers/authController.js";
 import requireAuth from "../middleware/authMiddleware.js";
 import requireInvitationAuth from "../middleware/invitationAuth.js";
 import { asyncHandler } from "../utils/http.js";
@@ -15,6 +15,16 @@ router.post(
     identity: (req) => `email:${String(req.body?.email || "").trim().toLowerCase()}`,
   }),
   asyncHandler(requestPasswordRecovery),
+);
+router.get(
+  "/client-invitation",
+  rateLimit({ windowMs: 15 * 60_000, max: 60 }),
+  asyncHandler(getClientPortalInvitation),
+);
+router.post(
+  "/client-invitation/accept",
+  rateLimit({ windowMs: 15 * 60_000, max: 10 }),
+  asyncHandler(acceptClientPortalInvitation),
 );
 router.get("/invitation", requireInvitationAuth, asyncHandler(getInvitation));
 router.post("/accept-invitation", requireInvitationAuth, rateLimit({ windowMs: 15 * 60_000, max: 5 }), asyncHandler(acceptMemberInvitation));

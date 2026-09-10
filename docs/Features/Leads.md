@@ -25,19 +25,19 @@ Runs the prospect pipeline from manual, CSV, public, website, and provider intak
 `backend/src/modules/leads/` contains routes, controllers, repository/services, validation, CSV/provider adapters, reports, routing, retainer logic, and four worker families.
 
 ## Frontend
-`frontend/src/modules/leads/pages/` and `frontend/src/modules/leads/components/`.
+`frontend/src/modules/leads/pages/` and `frontend/src/modules/leads/components/`. The lead detail curtain exposes adjacent Twilio Call and WhatsApp actions; WhatsApp opens the lead's normalized international number in a new browser tab and does not create an internal communication record. In the Contact card, the phone value opens the guarded CaseDesk dialer and the email value opens Chats in Email mode with the lead pre-addressed. The Overview and Work tabs derive consultation labels from both the saved state and scheduled time, distinguishing Upcoming, In progress, Awaiting outcome, and terminal results; outcome recording is unavailable before the consultation starts.
 
 ## Integrations
 [[Meta Lead Ads]], [[Twilio]], [[SMTP and IMAP]], and [[QuickBooks Online]] indirectly after conversion.
 
 ## Business Rules
-Lead numbering and source attribution are agency-scoped. Intake is idempotent, normalized, duplicate-aware, assigned by rules/backlog, and may send a welcome message. Conversion can create/link a client and case. Timers monitor first response, stale outreach, overdue work, and reactivation.
+Lead numbering and source attribution are agency-scoped. Intake is idempotent, normalized, duplicate-aware, assigned by rules/backlog, and may send a welcome message. Conversion can create/link a client and case. A consultation cannot be completed or marked as a no-show before its scheduled start; cancellation and rescheduling remain available for future bookings. Timers monitor first response, stale outreach, overdue work, and reactivation. When a nurture period expires, the worker atomically reopens the lead, completes its reactivation reminder, and assigns the lead owner a new follow-up due in 24 hours so every open lead retains a valid next action.
 
 ## Permissions
 Staff require leads or intake page access; data scope can be none, assigned, or all. Routing/transfer and destructive/commercial actions add role checks.
 
 ## Side Effects
-Creates activities, messages, appointments, follow-ups, notifications, clients/cases, and retainer/billing records.
+Creates activities, messages, appointments, follow-ups, notifications, clients/cases, and retainer/billing records. A staff-initiated lead email creates an idempotent `LeadMessageDelivery`, sends through the staff member's connected mailbox, and records the successful contact in lead history.
 
 ## Change Risk
 High because public ingestion and conversion cross security and CRM boundaries.

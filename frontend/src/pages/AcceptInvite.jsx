@@ -7,7 +7,7 @@ import { establishAuthLinkSession } from "../services/authLinkSession";
 
 export default function AcceptInvite() {
   const navigate = useNavigate();
-  const { refreshIdentity } = useAuth();
+  const { refreshIdentity, signIn } = useAuth();
   const [context, setContext] = useState(null);
   const [form, setForm] = useState({ password: "", confirmPassword: "", agencyName: "", agencyEmail: "", phone: "", address: "", city: "", province: "", country: "Canada", postalCode: "" });
   const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
@@ -17,6 +17,15 @@ export default function AcceptInvite() {
     let active = true;
     async function load() {
       try {
+        const clientInviteToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("invite_token");
+        if (clientInviteToken) {
+          const invitation = (await api.get("/auth/client-invitation", {
+            headers: { "X-Client-Invitation": clientInviteToken },
+          })).data.data;
+          if (!active) return;
+          setContext({ ...invitation, clientPortalInvite: true, clientInviteToken, requiresAgencySetup: false, alreadyActive: false });
+          return;
+        }
         await establishAuthLinkSession();
         const invitation = (await api.get("/auth/invitation")).data.data;
         let agency = {};
@@ -35,9 +44,18 @@ export default function AcceptInvite() {
     if (form.password !== form.confirmPassword) return setError("Passwords do not match.");
     setSaving(true);
     try {
-      if (context.requiresAgencySetup) await api.post("/onboarding/complete", form);
-      else await api.post("/auth/accept-invitation", { password: form.password });
-      const identity = await refreshIdentity();
+      let identity;
+      if (context.clientPortalInvite) {
+        const response = await api.post("/auth/client-invitation/accept", {
+          token: context.clientInviteToken,
+          password: form.password,
+        });
+        identity = await signIn(response.data.data.email, form.password);
+      } else {
+        if (context.requiresAgencySetup) await api.post("/onboarding/complete", form);
+        else await api.post("/auth/accept-invitation", { password: form.password });
+        identity = await refreshIdentity();
+      }
       navigate(identity.membership.role === "client" ? "/client-portal" : "/app/dashboard", { replace: true });
     } catch (reason) { setError(reason.response?.data?.message || reason.message || "We could not activate your account."); }
     finally { setSaving(false); }
@@ -46,7 +64,7 @@ export default function AcceptInvite() {
   if (loading) return <AuthShell title="Opening your secure link" description="Verifying your account link…" compact><div className="mx-auto mt-10 h-8 w-8 animate-spin rounded-full border-4 border-sky-100 border-t-sky-600" /></AuthShell>;
   if (!context) return <AuthShell title="Secure link unavailable" description="The account link could not be opened." backTo="/login" compact><div className="mt-8"><FormMessage error>{error}</FormMessage></div></AuthShell>;
 
-  return <AuthShell title={context.requiresAgencySetup ? "Set up your workspace" : context.alreadyActive ? "Reset your password" : "Finish your account"} description={context.requiresAgencySetup ? "Choose a password and confirm the workspace details CaseDesk will use in your templates." : context.alreadyActive ? `Choose a new password for your ${context.agencyName} account.` : `You’re joining ${context.agencyName}. Choose a secure password to continue.`} backTo="/login">
+  return <AuthShell title={context.requiresAgencySetup ? "Set up your workspace" : context.alreadyActive ? "Reset your password" : "Finish your account"} description={context.requiresAgencySetup ? "Choose a password and confirm the workspace details CaseDesk will use in your templates." : context.alreadyActive ? `Choose a new password for your ${context.agencyName} account.` : context.clientPortalInvite ? `Set up your ${context.agencyName} client portal. This invitation is valid until ${new Date(context.expiresAt).toLocaleDateString("en-CA", { dateStyle: "long" })}.` : `You’re joining ${context.agencyName}. Choose a secure password to continue.`} backTo="/login">
     <form onSubmit={submit} className="mt-8 grid gap-5 sm:grid-cols-2">
       {context.requiresAgencySetup && <>
         <FormField label="Workspace name"><input className={fieldClass} value={form.agencyName} onChange={update("agencyName")} required /></FormField>

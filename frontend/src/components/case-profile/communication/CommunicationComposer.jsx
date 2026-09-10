@@ -104,6 +104,7 @@ export default function CommunicationComposer({
   providers,
   permissions,
   templates,
+  lead = null,
   reply,
   prefill,
   allowClientSelection = false,
@@ -111,13 +112,14 @@ export default function CommunicationComposer({
   onClose,
   onSaved,
 }) {
+  const leadMode = Boolean(lead?.id);
   const [selectedClient, setSelectedClient] = useState(caseItem.client || null);
   const [clientSearch, setClientSearch] = useState("");
   const [clientResults, setClientResults] = useState([]);
   const [clientsLoading, setClientsLoading] = useState(allowClientSelection);
   const effectiveCaseItem = useMemo(
-    () => ({ ...caseItem, client: selectedClient }),
-    [caseItem, selectedClient],
+    () => ({ ...caseItem, client: leadMode ? lead : selectedClient }),
+    [caseItem, lead, leadMode, selectedClient],
   );
   const [values, setValues] = useState(() => ({
     ...initialValues(initialChannel, effectiveCaseItem, reply),
@@ -208,6 +210,7 @@ export default function CommunicationComposer({
 
   useEffect(() => {
     if (
+      leadMode ||
       submitting.current ||
       !effectiveCaseItem.client?.id ||
       !["Email", "Sms"].includes(values.channel) ||
@@ -245,6 +248,7 @@ export default function CommunicationComposer({
     values.bodyText,
     values.channel,
     draftId,
+    leadMode,
   ]);
 
   const chooseChannel = (channel) => {
@@ -294,6 +298,17 @@ export default function CommunicationComposer({
   };
 
   const persistDraft = async () => {
+    if (leadMode) {
+      const response = await api.post(`/leads/${encodeURIComponent(lead.id)}/email`, {
+        subject: values.subject,
+        bodyText: values.bodyText,
+        cc: splitAddresses(values.cc),
+        bcc: splitAddresses(values.bcc),
+        replyTo: values.replyTo || null,
+        idempotencyKey: idempotencyKey.current,
+      }, { headers: { "Idempotency-Key": idempotencyKey.current } });
+      return response.data.data;
+    }
     const response = draftId
       ? await api.patch(
           `/communications/messages/${draftId}/draft`,
@@ -317,7 +332,7 @@ export default function CommunicationComposer({
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!effectiveCaseItem.client?.id) {
+    if (!leadMode && !effectiveCaseItem.client?.id) {
       setError("Select a client before composing this email.");
       return;
     }
@@ -341,7 +356,9 @@ export default function CommunicationComposer({
       setSaving(true);
       setError("");
       let message;
-      if (["Email", "Sms"].includes(values.channel)) {
+      if (leadMode) {
+        message = await persistDraft();
+      } else if (["Email", "Sms"].includes(values.channel)) {
         message = await persistDraft();
         if (intent !== "draft") {
           const sent = await api.post(
@@ -363,7 +380,7 @@ export default function CommunicationComposer({
         );
         message = response.data.data;
       }
-      onSaved(message, { intent, client: effectiveCaseItem.client });
+      onSaved(message, { intent, client: leadMode ? null : effectiveCaseItem.client, lead: leadMode ? lead : null });
       onClose();
     } catch (requestError) {
       setError(
@@ -395,10 +412,12 @@ export default function CommunicationComposer({
         <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#002FA7]">
-              Client communication
+              {leadMode ? "Lead communication" : "Client communication"}
             </p>
             <h2 id="communication-composer-title" className="mt-1 text-xl font-semibold tracking-tight">
-              {reply
+              {leadMode
+                ? `New email — ${lead.fullName}`
+                : reply
                 ? `Reply to ${effectiveCaseItem.client?.fullName}`
                 : effectiveCaseItem.client?.fullName
                   ? `New communication — ${effectiveCaseItem.client.fullName}`
@@ -528,7 +547,7 @@ export default function CommunicationComposer({
                 {values.channel === "Email" ? "To" : "Phone number"}
                 <input
                   required
-                  readOnly={allowClientSelection}
+                readOnly={allowClientSelection || leadMode}
                   value={values.to}
                   onChange={(event) => update("to", event.target.value)}
                   className={inputClass}
@@ -751,7 +770,7 @@ export default function CommunicationComposer({
               </div>
             )}
           </section>
-          {["Email", "Sms"].includes(values.channel) ? (
+          {["Email", "Sms"].includes(values.channel) && !leadMode ? (
             <section className="rounded-[1.5rem] border border-slate-100 bg-white p-4 shadow-sm">
               <div
                 className={`grid gap-4 ${values.channel === "Email" ? "sm:grid-cols-2" : ""}`}
@@ -803,14 +822,16 @@ export default function CommunicationComposer({
         </main>
         <footer className="flex flex-col gap-3 border-t border-slate-100 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-slate-400">
-            {autoSaving
+            {leadMode
+              ? "This email will be recorded in the lead's Messages and History tabs."
+              : autoSaving
               ? "Saving draft…"
               : savedAt
                 ? `Draft saved ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                 : "Unsaved changes are protected by autosave"}
           </p>
           <div className="flex justify-end gap-2">
-            {["Email", "Sms"].includes(values.channel) ? (
+            {["Email", "Sms"].includes(values.channel) && !leadMode ? (
               <button
                 type="submit"
                 value="draft"
@@ -825,7 +846,8 @@ export default function CommunicationComposer({
               value="send"
               disabled={
                 saving ||
-                !effectiveCaseItem.client?.id ||
+                (!leadMode && !effectiveCaseItem.client?.id) ||
+                (leadMode && !lead?.email) ||
                 !allowed ||
                 // Chat's "sendConfigured" reflects live Supabase Realtime
                 // push readiness, not whether the message can be delivered —

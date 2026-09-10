@@ -40,19 +40,34 @@ test("a temporary-password email shows the password and a plain sign-in link, no
   assert.match(content.text, /https:\/\/app\.casedesk\.example\/login/);
 });
 
-test("the existing link-based onboarding email is unaffected by the new temporary-password branch", () => {
+test("client onboarding email explains the seven-day link lifetime", () => {
   const content = accountAccessEmailContent({
     agency: { name: "CHK Immigration" },
     fullName: "Kamaldeep Singh",
     actionLink: "https://app.casedesk.example/auth/accept-invite?token=abc",
     kind: "onboarding",
     audience: "client",
+    linkValidityDays: 7,
   });
 
   assert.match(content.html, /Set up my account/);
-  assert.match(content.html, /use this link only once/);
+  assert.match(content.html, /used only once/);
   assert.doesNotMatch(content.html, /Temporary password/);
   assert.match(content.text, /https:\/\/app\.casedesk\.example\/auth\/accept-invite\?token=abc/);
+  assert.match(content.text, /valid for seven days/i);
+});
+
+test("Supabase-backed staff invitations do not claim the client seven-day lifetime", () => {
+  const content = accountAccessEmailContent({
+    agency: { name: "CHK Immigration" },
+    fullName: "Staff Member",
+    actionLink: "https://auth.example.com/verify?token=abc",
+    kind: "onboarding",
+    audience: "staff",
+  });
+
+  assert.match(content.text, /use this link only once/i);
+  assert.doesNotMatch(content.text, /seven days/i);
 });
 
 test("resetting an existing portal password also activates its Supabase identity", async () => {

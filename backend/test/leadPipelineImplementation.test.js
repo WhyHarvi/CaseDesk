@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  consultationOutcomeCanBeRecorded,
   consultationUpdateAccessWhere,
   qualificationWorkflow,
   recordLeadActivity,
@@ -40,6 +41,42 @@ test("consultation outcomes follow the consultation assignee instead of the lead
   assert.deepEqual(
     consultationUpdateAccessWhere({ auth: { role: "consultant", userId: "consultant-1" } }),
     { consultantUserId: "consultant-1" },
+  );
+});
+
+test("upcoming consultations cannot be completed or marked as no-shows", () => {
+  const now = new Date("2026-09-10T14:00:00.000Z");
+  const future = new Date("2026-09-10T15:00:00.000Z");
+  const started = new Date("2026-09-10T13:00:00.000Z");
+
+  assert.equal(consultationOutcomeCanBeRecorded("COMPLETED", future, now), false);
+  assert.equal(consultationOutcomeCanBeRecorded("NO_SHOW", future, now), false);
+  assert.equal(consultationOutcomeCanBeRecorded("COMPLETED", started, now), true);
+  assert.equal(consultationOutcomeCanBeRecorded("CANCELLED", future, now), true);
+  assert.equal(consultationOutcomeCanBeRecorded("RESCHEDULED", future, now), true);
+});
+
+test("consultation updates reject a completed result before the scheduled start", async () => {
+  const db = {
+    $transaction: async (operation) => operation({
+      leadConsultation: {
+        findFirst: async () => ({
+          id: "consultation-future",
+          leadId: "lead-1",
+          consultantUserId: "consultant-1",
+          startAt: new Date("2999-09-10T15:00:00.000Z"),
+        }),
+      },
+    }),
+  };
+
+  await assert.rejects(
+    updateConsultation({
+      auth: { agencyId: "agency-1", userId: "consultant-1", role: "consultant" },
+      params: { id: "lead-1", consultationId: "consultation-future" },
+      body: { status: "COMPLETED", outcome: "FOLLOW_UP_REQUIRED" },
+    }, db),
+    (error) => error.statusCode === 409 && error.code === "CONSULTATION_NOT_STARTED",
   );
 });
 
@@ -176,24 +213,66 @@ test("lead note autosave updates the same authored note", async () => {
   assert.equal(result.id, "note-1");
 });
 
-test("due nurture leads automatically reopen and close their reactivation work", async () => {
+test("due nurture leads reopen with a valid next action and close their reactivation work", async () => {
   const calls = [];
   const now = new Date("2026-08-06T16:00:00.000Z");
   const tx = {
-    lead: { updateMany: async ({ data }) => { calls.push(["lead", data]); return { count: 1 }; } },
-    leadFollowUp: { updateMany: async ({ data }) => calls.push(["followUp", data]) },
+    lead: {
+      updateMany: async ({ data }) => {
+        if (data.status === "OPEN") {
+          assert.ok(data.nextActionType);
+          assert.ok(data.nextActionDescription);
+          assert.ok(data.nextActionAt);
+          assert.ok(data.nextActionOwnerId);
+        }
+        calls.push(["lead", data]);
+        return { count: 1 };
+      },
+    },
+    leadFollowUp: {
+      updateMany: async ({ data }) => calls.push(["followUpUpdated", data]),
+      create: async ({ data }) => calls.push(["followUpCreated", data]),
+    },
     leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
   };
   const db = {
-    lead: { findMany: async () => [{ id: "lead-1", agencyId: "agency-1", leadNumber: "LD-1" }] },
+    lead: { findMany: async () => [{ id: "lead-1", agencyId: "agency-1", leadNumber: "LD-1", ownerUserId: "owner-1" }] },
     $transaction: async (operation) => operation(tx),
   };
 
   const result = await reactivateDueNurtureLeads(db, now);
   assert.deepEqual(result, { checked: 1, reactivated: 1 });
-  assert.equal(calls.find(([kind]) => kind === "lead")[1].status, "OPEN");
-  assert.equal(calls.find(([kind]) => kind === "followUp")[1].completionOutcome, "Automatically reactivated");
+  const leadUpdate = calls.find(([kind]) => kind === "lead")[1];
+  const nextFollowUp = calls.find(([kind]) => kind === "followUpCreated")[1];
+  assert.equal(leadUpdate.status, "OPEN");
+  assert.equal(leadUpdate.nextActionOwnerId, "owner-1");
+  assert.equal(leadUpdate.nextActionDescription, "Follow up with reactivated lead");
+  assert.equal(leadUpdate.nextActionAt.toISOString(), "2026-08-07T16:00:00.000Z");
+  assert.equal(calls.find(([kind]) => kind === "followUpUpdated")[1].completionOutcome, "Automatically reactivated");
+  assert.equal(nextFollowUp.assignedUserId, "owner-1");
+  assert.equal(nextFollowUp.description, leadUpdate.nextActionDescription);
+  assert.equal(nextFollowUp.dueAt, leadUpdate.nextActionAt);
   assert.equal(calls.find(([kind]) => kind === "activity")[1].activityType, "LEAD_REACTIVATED");
+});
+
+test("a reactivation worker that loses the conditional claim creates no follow-up", async () => {
+  const now = new Date("2026-08-06T16:00:00.000Z");
+  const tx = {
+    lead: { updateMany: async () => ({ count: 0 }) },
+    leadFollowUp: {
+      updateMany: async () => assert.fail("A lost claim must not complete follow-ups"),
+      create: async () => assert.fail("A lost claim must not create a follow-up"),
+    },
+    leadActivity: { create: async () => assert.fail("A lost claim must not create activity") },
+  };
+  const db = {
+    lead: { findMany: async () => [{ id: "lead-1", agencyId: "agency-1", leadNumber: "LD-1", ownerUserId: "owner-1" }] },
+    $transaction: async (operation) => operation(tx),
+  };
+
+  const result = await reactivateDueNurtureLeads(db, now);
+
+  assert.deepEqual(result, { checked: 1, reactivated: 0 });
 });
 
 test("sensitive commercial states require evidence and converted leads reject independent edits", async () => {

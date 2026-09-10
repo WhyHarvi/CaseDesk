@@ -2,26 +2,47 @@ import prisma from "../../services/prisma/client.js";
 import { logger } from "../../services/logger.js";
 
 const POLL_MS = Math.max(Number(process.env.LEAD_REACTIVATION_POLL_MS) || 120_000, 30_000);
+const FOLLOW_UP_DELAY_MS = 24 * 60 * 60_000;
+const FOLLOW_UP_DESCRIPTION = "Follow up with reactivated lead";
 let timer = null;
 let running = false;
 
 export async function reactivateDueNurtureLeads(db = prisma, now = new Date()) {
   const due = await db.lead.findMany({
     where: { status: "NURTURE", nurtureUntil: { lte: now }, deletedAt: null },
-    select: { id: true, agencyId: true, leadNumber: true },
+    select: { id: true, agencyId: true, leadNumber: true, ownerUserId: true },
     take: 100,
   });
   let reactivated = 0;
   for (const lead of due) {
     const changed = await db.$transaction(async (tx) => {
+      const followUpDueAt = new Date(now.getTime() + FOLLOW_UP_DELAY_MS);
       const updated = await tx.lead.updateMany({
         where: { id: lead.id, agencyId: lead.agencyId, status: "NURTURE", nurtureUntil: { lte: now } },
-        data: { status: "OPEN", nurtureUntil: null, nextActionType: null, nextActionDescription: null, nextActionAt: null, nextActionOwnerId: null, version: { increment: 1 } },
+        data: {
+          status: "OPEN",
+          nurtureUntil: null,
+          nextActionType: "FOLLOW_UP",
+          nextActionDescription: FOLLOW_UP_DESCRIPTION,
+          nextActionAt: followUpDueAt,
+          nextActionOwnerId: lead.ownerUserId,
+          version: { increment: 1 },
+        },
       });
       if (!updated.count) return false;
       await tx.leadFollowUp.updateMany({
         where: { agencyId: lead.agencyId, leadId: lead.id, status: "PENDING" },
         data: { status: "COMPLETED", completedAt: now, completionOutcome: "Automatically reactivated" },
+      });
+      await tx.leadFollowUp.create({
+        data: {
+          agencyId: lead.agencyId,
+          leadId: lead.id,
+          assignedUserId: lead.ownerUserId,
+          type: "FOLLOW_UP",
+          description: FOLLOW_UP_DESCRIPTION,
+          dueAt: followUpDueAt,
+        },
       });
       await tx.leadActivity.create({
         data: { agencyId: lead.agencyId, leadId: lead.id, activityType: "LEAD_REACTIVATED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead automatically reactivated from nurture", description: "The scheduled reactivation date was reached." },

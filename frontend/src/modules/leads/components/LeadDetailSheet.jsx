@@ -7,11 +7,13 @@ import {
   Circle,
   ClipboardCheck,
   ClipboardList,
+  ExternalLink,
   HeartHandshake,
   Inbox,
   Landmark,
   Mail,
   MapPin,
+  MessageCircle,
   MessageSquareText,
   Pencil,
   Phone,
@@ -29,7 +31,9 @@ import { useAuth } from "../../../auth/AuthContext";
 import { useSoftphone } from "../../../components/calls/SoftphoneProvider";
 import { openGlobalDialpad } from "../../../components/calls/GlobalDialpad";
 import CallRecordingPlayer from "../../../components/calls/CallRecordingPlayer";
+import useNow from "../../../hooks/useNow";
 import api from "../../../services/api";
+import { consultationDisplayState, featuredConsultation } from "../consultationPresentation";
 import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAGES, PAYMENT_READY_VALUES, paymentStatusTone, RETAINER_READY_VALUES, retainerStatusTone, statusTone } from "../leadPresentation";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
@@ -44,6 +48,14 @@ const tabs = [
   { id: "payments", label: "Payments", icon: Landmark },
   { id: "messages", label: "Messages", icon: MessageSquareText },
 ];
+
+function whatsappNumber(value) {
+  const raw = String(value || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+  if (!raw.startsWith("+") && digits.length === 10) return `1${digits}`;
+  return digits;
+}
 
 // `select`, when present, replaces the plain value with a real <select> —
 // pick the new value directly in the grid, no popup panel. Used for Stage
@@ -91,6 +103,7 @@ function DetailSkeleton() {
 export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose, onChanged = () => {} }) {
   const { role, appUser } = useAuth();
   const { status: softphoneStatus, active: activeCall } = useSoftphone();
+  const now = useNow();
   const isFrontdesk = role === "frontdesk";
   const [lead, setLead] = useState(initialLead);
   const [tab, setTab] = useState("overview");
@@ -156,7 +169,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     const draftConsultationId = getDraftConsultationId();
     if (!draftConsultationId) return;
     const match = consultations.find((item) => item.id === draftConsultationId);
-    if (match) setCompletingConsultation(match);
+    if (match && consultationDisplayState(match).canRecordOutcome) setCompletingConsultation(match);
   }, [consultations, completingConsultation]);
 
   useEffect(() => {
@@ -252,7 +265,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       setOwnerSaving(true);
       setWorkflowError("");
       setWorkflowNotice("");
-      if (role === "admin") {
+      if (role === "admin" || role === "manager") {
         const response = await api.post(`/leads/${lead.id}/assign`, { ownerUserId });
         setLead((current) => ({ ...current, ...response.data.data, transferRequests: [] }));
         setWorkflowNotice("Lead transferred.");
@@ -313,7 +326,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   // Owner changes are admin-only and may target any active lead-team member,
   // including front desk. Stage and priority remain editable only by an admin
   // or the consultant currently responsible for the lead.
-  const canReassign = isWorkable && role === "admin";
+  const canReassign = isWorkable && ["admin", "manager"].includes(role);
   const canRequestTransfer = isWorkable && role === "consultant" && ownsLead;
   const pendingTransfer = lead.transferRequests?.[0] || null;
   // Ordered newest-first by the backend — the first one still awaiting a
@@ -322,14 +335,14 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   // activity history.
   const activeAdvice = (lead.appointmentAdvice || []).find((item) => item.outcome === "PENDING");
   const leadOwners = staff.filter(
-    (person) => ["admin", "consultant", "frontdesk"].includes(person.role),
+    (person) => ["admin", "consultant", "frontdesk", "manager"].includes(person.role),
   );
-  const canEditWorkflow = isWorkable && (role === "admin" || (role === "consultant" && ownsLead));
-  // Mirrors updateLeadFollowUp() exactly: admins, the owner, and durable
-  // collaborators can resolve the lead's backlog; other staff can close only
-  // work explicitly assigned to them.
+  const canEditWorkflow = isWorkable && (["admin", "manager"].includes(role) || (role === "consultant" && ownsLead));
+  // Mirrors updateLeadFollowUp() exactly: admins, managers, the owner, and
+  // durable collaborators can resolve the lead's backlog; other staff can
+  // close only work explicitly assigned to them.
   const canCloseFollowUp = (item) => item.status === "PENDING" && (
-    role === "admin" || ownsLead || collaboratesOnLead || item.assignedUserId === appUser?.id
+    ["admin", "manager"].includes(role) || ownsLead || collaboratesOnLead || item.assignedUserId === appUser?.id
   );
   // The three separate things convertLead() checks server-side, mirrored
   // here so the UI never shows a Convert button the backend would reject —
@@ -338,7 +351,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const retainerReady = RETAINER_READY_VALUES.includes(lead.retainerStatus);
   const paymentReady = PAYMENT_READY_VALUES.includes(lead.initialPaymentStatus);
   const readyToConvert = stageReady && retainerReady && paymentReady;
-  const canConvertLead = role === "admin" || (role === "consultant" && ownsLead);
+  const canConvertLead = ["admin", "manager"].includes(role) || (role === "consultant" && ownsLead);
   const conversionBlockers = [
     !stageReady ? "Reach the Ready to Convert stage" : null,
     !retainerReady ? "Confirm the retainer is signed (or mark it not required)" : null,
@@ -404,6 +417,9 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   // the initial case payment tracked above — flagged here so a paid
   // consultation doesn't read as "payment received" toward conversion.
   const paidConsultationFee = consultations.find((item) => item.paymentStatus === "PAID" && item.fee != null);
+  const highlightedConsultation = useMemo(() => featuredConsultation(consultations, now), [consultations, now]);
+  const highlightedConsultationState = highlightedConsultation ? consultationDisplayState(highlightedConsultation, now) : null;
+  const whatsAppPhone = whatsappNumber(lead.phoneNormalized || lead.phone);
   const workflowActions = isWorkable
     ? [
         { id: "activity", label: "Log activity", icon: PhoneIncoming, show: true },
@@ -424,7 +440,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close lead details" />
       <aside className="relative flex h-full w-full max-w-3xl flex-col overflow-hidden border-l border-white/80 bg-[#f4f7fa] shadow-[0_30px_100px_rgba(15,23,42,0.28)]">
         <header className="bg-white px-6 pt-5">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{initials(lead)}</div>
               <div className="min-w-0">
@@ -436,19 +452,34 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-4">
-              <button
-                type="button"
-                disabled={!lead.phone || softphoneStatus !== "ready" || Boolean(activeCall)}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  startCall();
-                }}
-                title={!lead.phone ? "Add a phone number to call this lead" : softphoneStatus !== "ready" ? "Twilio calling is not ready" : activeCall ? "Finish the current call first" : "Call this lead with Twilio"}
-                className="relative z-0 inline-flex h-11 items-center gap-2 overflow-visible rounded-full bg-[#34c759] px-4 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(52,199,89,0.25)] transition hover:-translate-y-0.5 hover:bg-[#2fb350] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
-              >
-                {lead.phone && softphoneStatus === "ready" && !activeCall ? <span className="pointer-events-none absolute -inset-1 -z-10 animate-ping rounded-full bg-[#34c759]/35" style={{ animationDuration: "2.4s" }} aria-hidden="true" /> : null}
-                <Phone className="h-3.5 w-3.5 fill-current" />Call
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!lead.phone || softphoneStatus !== "ready" || Boolean(activeCall)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    startCall();
+                  }}
+                  title={!lead.phone ? "Add a phone number to call this lead" : softphoneStatus !== "ready" ? "Twilio calling is not ready" : activeCall ? "Finish the current call first" : "Call this lead with Twilio"}
+                  className="relative z-0 inline-flex h-11 items-center gap-2 overflow-visible rounded-full bg-[#34c759] px-4 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(52,199,89,0.25)] transition hover:-translate-y-0.5 hover:bg-[#2fb350] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
+                >
+                  {lead.phone && softphoneStatus === "ready" && !activeCall ? <span className="pointer-events-none absolute -inset-1 -z-10 animate-ping rounded-full bg-[#34c759]/35" style={{ animationDuration: "2.4s" }} aria-hidden="true" /> : null}
+                  <Phone className="h-3.5 w-3.5 fill-current" />Call
+                </button>
+                {whatsAppPhone ? (
+                  <a
+                    href={`https://wa.me/${whatsAppPhone}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`Open WhatsApp chat with ${leadName(lead)}`}
+                    title={`Message ${leadName(lead)} on WhatsApp`}
+                    className="inline-flex h-11 items-center gap-2 rounded-full bg-[#25D366] px-4 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(37,211,102,0.22)] transition hover:-translate-y-0.5 hover:bg-[#1fb85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+                  >
+                    <MessageCircle className="h-4 w-4" aria-hidden="true" />WhatsApp<ExternalLink className="h-3 w-3 opacity-80" aria-hidden="true" />
+                  </a>
+                ) : null}
+              </div>
               <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); }} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900" aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
           </div>
@@ -520,6 +551,23 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                     </section>
                   ) : null}
 
+                  {highlightedConsultation ? (
+                    <section className="rounded-2xl border border-blue-200 bg-white p-5 shadow-[inset_4px_0_0_#002FA7]">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Consultation status</p>
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1 ring-inset ${highlightedConsultationState.badgeClass}`}>{highlightedConsultationState.label}</span>
+                          </div>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">{humanize(highlightedConsultation.appointmentType)} with {highlightedConsultation.consultant?.fullName || "Consultant"}</p>
+                          <p className="mt-1 text-xs text-slate-500">{highlightedConsultationState.timingPrefix} {new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(highlightedConsultation.startAt))}</p>
+                          <p className="mt-2 text-xs leading-5 text-slate-600">{highlightedConsultationState.description}</p>
+                        </div>
+                        <button type="button" onClick={() => setTab("work")} className="h-9 shrink-0 rounded-full border border-blue-200 bg-blue-50 px-3.5 text-xs font-semibold text-[#002FA7] transition hover:bg-blue-100">View consultation</button>
+                      </div>
+                    </section>
+                  ) : null}
+
                   <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
                     {workflowError ? <p className="mb-3 text-xs font-medium text-rose-600">{workflowError}</p> : null}
                     {workflowNotice ? <p className="mb-3 text-xs font-medium text-emerald-700">{workflowNotice}</p> : null}
@@ -585,8 +633,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                       {lead.status !== "CONVERTED" ? <button type="button" onClick={() => setActiveAction("edit-details")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"><Pencil className="h-3.5 w-3.5" />Edit</button> : lead.convertedClientId ? <Link to={`/app/clients/${lead.convertedClientId}`} className="text-xs font-semibold text-brand-700">Edit on client →</Link> : null}
                     </div>
                     <div className="grid gap-px bg-slate-100 sm:grid-cols-2">
-                      <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Phone className="h-3.5 w-3.5" />Phone</p><p className="mt-1.5 text-sm font-medium text-slate-800">{lead.phone}</p></div>
-                      <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Mail className="h-3.5 w-3.5" />Email</p><p className="mt-1.5 break-words text-sm font-medium text-slate-800">{lead.email || "Not provided"}</p></div>
+                      <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Phone className="h-3.5 w-3.5" />Phone</p><button type="button" onClick={startCall} disabled={!lead.phone || softphoneStatus !== "ready" || Boolean(activeCall)} title={softphoneStatus !== "ready" ? "Twilio calling is not ready" : activeCall ? "Finish the current call first" : `Call ${leadName(lead)}`} className="mt-1.5 break-words text-left text-sm font-semibold text-[#002FA7] underline decoration-transparent underline-offset-4 transition hover:decoration-current focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:text-slate-400">{lead.phone || "Not provided"}</button></div>
+                      <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Mail className="h-3.5 w-3.5" />Email</p>{lead.email && !["CONVERTED", "ARCHIVED"].includes(lead.status) ? <Link to={`/app/chats?kind=email&compose=lead-email&lead=${encodeURIComponent(lead.id)}`} title={`Email ${leadName(lead)}`} className="mt-1.5 inline-block break-all text-sm font-semibold text-[#002FA7] underline decoration-transparent underline-offset-4 transition hover:decoration-current focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{lead.email}</Link> : <p className="mt-1.5 break-words text-sm font-medium text-slate-800">{lead.email || "Not provided"}</p>}</div>
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><MapPin className="h-3.5 w-3.5" />Location</p><p className="mt-1.5 text-sm font-medium text-slate-800">{[lead.province, lead.country].filter(Boolean).join(", ") || "Not provided"}</p></div>
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><UserRound className="h-3.5 w-3.5" />Interest</p><p className="mt-1.5 text-sm font-medium text-slate-800">{lead.immigrationInterest || "Not specified"}</p></div>
                       <div className="bg-white px-5 py-4"><p className="text-xs text-slate-400">Preferred contact time</p><p className="mt-1.5 text-sm font-medium text-slate-800">{lead.preferredContactTime || "Not provided"}</p></div>
@@ -614,7 +662,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-slate-800">Retainer signed</p>
                             <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${retainerStatusTone[lead.retainerStatus] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(lead.retainerStatus)}</span>
-                            {!retainerReady && role !== "admin" && !ownsLead ? <p className="mt-1 text-[11px] leading-4 text-amber-700">Only an admin or this lead's assigned consultant can confirm this as Signed.</p> : null}
+                            {!retainerReady && !["admin", "manager"].includes(role) && !ownsLead ? <p className="mt-1 text-[11px] leading-4 text-amber-700">Only an admin, manager, or this lead's assigned consultant can confirm this as Signed.</p> : null}
                           </div>
                         </div>
                         {lead.status === "OPEN" ? <button type="button" onClick={() => setCommercialStatusOpen(true)} className="h-8 shrink-0 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">Update</button> : null}
@@ -626,7 +674,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-slate-800">Initial payment received</p>
                             <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${paymentStatusTone[lead.initialPaymentStatus] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(lead.initialPaymentStatus)}</span>
-                            {!paymentReady && role !== "admin" && !ownsLead ? <p className="mt-1 text-[11px] leading-4 text-amber-700">Only an admin or this lead's assigned consultant can confirm this as Paid.</p> : null}
+                            {!paymentReady && !["admin", "manager"].includes(role) && !ownsLead ? <p className="mt-1 text-[11px] leading-4 text-amber-700">Only an admin, manager, or this lead's assigned consultant can confirm this as Paid.</p> : null}
                             {paidConsultationFee ? <p className="mt-1 text-[11px] leading-4 text-slate-400">Separate from the ${Number(paidConsultationFee.fee).toLocaleString("en-CA")} consultation fee, already paid.</p> : null}
                           </div>
                         </div>
@@ -746,11 +794,14 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                   <section>
                     <div className="mb-3 flex items-center justify-between"><div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Video className="h-4 w-4 text-slate-400" />Consultations</h3><p className="mt-1 text-xs text-slate-500">{consultations.length} records</p></div>{lead.status === "OPEN" ? <Link to={`/app/calendar?bookForLead=${encodeURIComponent(lead.id)}`} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand-600 px-3.5 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" />Book</Link> : null}</div>
                     {consultationError ? <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">{consultationError}</div> : null}
-                    <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{consultations.length ? consultations.map((item, index) => <div key={item.id} role={item.appointment?.id ? "button" : undefined} tabIndex={item.appointment?.id ? 0 : undefined} onClick={() => { if (item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} onKeyDown={(event) => { if (event.key === "Enter" && item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} className={[
-                      "px-5 py-4 transition",
-                      item.appointment?.id ? "cursor-pointer hover:bg-sky-50/50" : "",
-                      index ? "border-t border-slate-100" : "",
-                    ].join(" ")}><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{humanize(item.appointmentType)} · {item.consultant?.fullName || "Consultant"}</p><p className="mt-1 text-xs text-slate-500">{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.startAt))}</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600">{humanize(item.status)}</span>{["SCHEDULED", "CONFIRMED"].includes(item.status) && role !== "frontdesk" ? <button type="button" onClick={(event) => { event.stopPropagation(); setCompletingConsultation(item); }} className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">Complete</button> : null}</div></div>{item.outcome ? <p className="mt-2 text-xs font-semibold text-brand-700">{humanize(item.outcome)}</p> : null}</div>) : <EmptyState>No consultations booked.</EmptyState>}</div>
+                    <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{consultations.length ? consultations.map((item, index) => {
+                      const displayState = consultationDisplayState(item, now);
+                      return <div key={item.id} role={item.appointment?.id ? "button" : undefined} tabIndex={item.appointment?.id ? 0 : undefined} onClick={() => { if (item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} onKeyDown={(event) => { if (event.key === "Enter" && item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} className={[
+                        "px-5 py-4 transition",
+                        item.appointment?.id ? "cursor-pointer hover:bg-sky-50/50" : "",
+                        index ? "border-t border-slate-100" : "",
+                      ].join(" ")}><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{humanize(item.appointmentType)} · {item.consultant?.fullName || "Consultant"}</p><p className="mt-1 text-xs text-slate-500">{displayState.timingPrefix} {new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.startAt))}</p><p className="mt-1 text-[11px] leading-4 text-slate-500">{displayState.description}</p></div><div className="flex shrink-0 flex-col items-end gap-2"><span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1 ring-inset ${displayState.badgeClass}`}>{displayState.label}</span>{displayState.canRecordOutcome && role !== "frontdesk" ? <button type="button" onClick={(event) => { event.stopPropagation(); setCompletingConsultation(item); }} className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">Record outcome</button> : null}</div></div>{item.outcome ? <p className="mt-2 text-xs font-semibold text-brand-700">{humanize(item.outcome)}</p> : null}</div>;
+                    }) : <EmptyState>No consultations booked.</EmptyState>}</div>
                   </section>
 
                   <section>

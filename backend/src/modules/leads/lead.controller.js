@@ -7,6 +7,7 @@ import { logger } from "../../services/logger.js";
 import { getLeadDashboard as loadLeadDashboard, getLeadDashboardDrilldown as loadLeadDashboardDrilldown } from "./lead.dashboard.service.js";
 import { getAgeingReport as loadAgeingReport, getConversionTrendReport as loadConversionTrendReport, getEmployeeReport as loadEmployeeReport, getFunnelReport as loadFunnelReport, getLostReport as loadLostReport, getResponseTimeReport as loadResponseTimeReport, getSourceReport as loadSourceReport, getWorkloadReport as loadWorkloadReport } from "./lead.report.service.js";
 import { requestStaleLeadOutreachForAgency } from "./lead.staleOutreach.service.js";
+import { sendLeadEmail as deliverLeadEmail } from "./lead.email.service.js";
 
 export async function getLeadDashboard(req, res) {
   res.json({ data: await loadLeadDashboard(req) });
@@ -66,6 +67,10 @@ export async function getLead(req, res) {
 
 export async function updateLeadDetails(req, res) {
   res.json({ data: await service.updateLeadDetails(req) });
+}
+
+export async function sendLeadEmail(req, res) {
+  res.status(201).json({ data: await deliverLeadEmail(req) });
 }
 
 export async function listLeadSources(req, res) {

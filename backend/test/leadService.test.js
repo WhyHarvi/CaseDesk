@@ -309,7 +309,7 @@ test("manual stage change rejects a consultant who does not own the lead", async
   };
   await assert.rejects(
     () => changeLeadStage({ auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { stage: "CONTACTING" } }, { $transaction: (op) => op(tx) }),
-    /Only an admin or this lead's assigned consultant/,
+    /Only an admin, manager, or this lead's assigned consultant/,
   );
 });
 
@@ -377,7 +377,7 @@ test("manual priority change rejects a consultant who does not own the lead", as
   };
   await assert.rejects(
     () => changeLeadPriority({ auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { priority: "HIGH" } }, { $transaction: (op) => op(tx) }),
-    /Only an admin or this lead's assigned consultant/,
+    /Only an admin, manager, or this lead's assigned consultant/,
   );
 });
 
@@ -540,7 +540,7 @@ test("commercial status update rejects a consultant who does not own the lead wh
 
   await assert.rejects(
     () => updateCommercialStatus(req, db),
-    /Only an admin or this lead's assigned consultant/,
+    /Only an admin, manager, or this lead's assigned consultant/,
   );
 });
 
@@ -674,7 +674,7 @@ test("conversion rejects a consultant who can see but does not own the lead", as
 
   await assert.rejects(
     () => convertLead(req, db),
-    /Only an admin or this lead's assigned consultant/,
+    /Only an admin, manager, or this lead's assigned consultant/,
   );
 });
 

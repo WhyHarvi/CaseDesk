@@ -466,7 +466,8 @@ test("consultation notes survive a browser reload the same way the New Appointme
   // from the sessionStorage draft once its own data (consultations /
   // appointment) has loaded back in, reattaching the still-open sheet to
   // the right consultation.
-  assert.match(overlay, /getDraftConsultationId\(\) === appointment\.leadConsultation\.id\) setCompletingConsultation\(true\)/);
+  assert.match(overlay, /const hasStarted = new Date\(appointment\.startsAt\) <= new Date\(\);/);
+  assert.match(overlay, /if \(hasStarted && getDraftConsultationId\(\) === appointment\.leadConsultation\.id\) setCompletingConsultation\(true\)/);
   assert.match(leadDetail, /const match = consultations\.find\(\(item\) => item\.id === draftConsultationId\);/);
-  assert.match(leadDetail, /if \(match\) setCompletingConsultation\(match\);/);
+  assert.match(leadDetail, /if \(match && consultationDisplayState\(match\)\.canRecordOutcome\) setCompletingConsultation\(match\);/);
 });

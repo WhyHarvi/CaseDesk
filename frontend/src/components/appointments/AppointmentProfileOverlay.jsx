@@ -230,7 +230,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   }, [appointmentId, canAccessInternalNotes, initialAction, initialTab]);
   useEffect(() => {
     if (completingConsultation || !appointment?.leadConsultation) return;
-    if (getDraftConsultationId() === appointment.leadConsultation.id) setCompletingConsultation(true);
+    const hasStarted = new Date(appointment.startsAt) <= new Date();
+    if (hasStarted && getDraftConsultationId() === appointment.leadConsultation.id) setCompletingConsultation(true);
   }, [appointment, completingConsultation]);
   const person = useMemo(() => personFor(appointment), [appointment]);
   const clientNotes = appointment?.clientNotes ?? appointment?.notes ?? [];

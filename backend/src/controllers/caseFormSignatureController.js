@@ -78,6 +78,27 @@ export async function sendFormSignatureRequest(req, res) {
   }
   const recipients = await clientRecipientIds(form.agencyId, form.clientId);
   if (!recipients.length) throw createHttpError(409, "Create client portal access before sending the signature request");
+  // Once a form has already been client-signed, form.storageKey points at
+  // that signed copy — it already has the applicant's ink baked into the
+  // Section E box. Resending on top of that would hand createSignedImm5476Copy
+  // a "source" that already looks signed, so it skips re-stamping (the same
+  // guard that correctly stops the representative's mark from being drawn
+  // twice) and the client's new signature never actually lands on the PDF,
+  // even though the database record moves on to it. A fresh request always
+  // has to source from the last representative-signed-only copy instead, so
+  // there's nothing but a blank applicant box for the new signature to land in.
+  let sourceStorageKey = form.storageKey;
+  let sourceFileHash = form.fileHash;
+  if (form.currentCopyType === "ClientSigned") {
+    const lastFilled = await prisma.caseFormVersion.findFirst({
+      where: { caseFormId: form.id, agencyId: form.agencyId, copyType: "Filled" },
+      orderBy: { versionNumber: "desc" },
+      select: { storageKey: true, fileHash: true },
+    });
+    if (!lastFilled) throw createHttpError(409, "Generate a filled copy of this form again before requesting a new signature.");
+    sourceStorageKey = lastFilled.storageKey;
+    sourceFileHash = lastFilled.fileHash;
+  }
   const message = req.body?.message ? String(req.body.message).trim().slice(0, 1000) : null;
   const data = await prisma.$transaction(async (tx) => {
     await tx.caseFormSignatureRequest.updateMany({ where: { caseFormId: form.id, status: "Sent" }, data: { status: "Cancelled" } });
@@ -88,8 +109,8 @@ export async function sendFormSignatureRequest(req, res) {
         caseId: form.caseId,
         clientId: form.clientId,
         representativeUserId: form.representativeUser.id,
-        sourceStorageKey: form.storageKey,
-        sourceFileHash: form.fileHash,
+        sourceStorageKey,
+        sourceFileHash,
         submissionChannel: "PortalOrSecureAccount",
         message,
         applicantNameSnapshot: applicantName(form),

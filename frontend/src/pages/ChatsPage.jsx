@@ -463,6 +463,7 @@ export default function ChatsPage() {
   const requestedKind = searchParams.get("kind");
   const initialKind = ["ai", "support", "client", "email", "sms", "internal"].includes(requestedKind) ? requestedKind : "internal";
   const requestedThreadId = searchParams.get("thread") || "";
+  const requestedLeadEmailId = searchParams.get("compose") === "lead-email" ? searchParams.get("lead") || "" : "";
   const [internalThreads, setInternalThreads] = useState([]);
   const [clientConversations, setClientConversations] = useState([]);
   const [emailConversations, setEmailConversations] = useState([]);
@@ -503,6 +504,7 @@ export default function ChatsPage() {
   const [communicationTemplates, setCommunicationTemplates] = useState([]);
   const [groupProfileOpen, setGroupProfileOpen] = useState(false);
   const [emailComposerOpen, setEmailComposerOpen] = useState(false);
+  const [leadEmailTarget, setLeadEmailTarget] = useState(null);
   const [smsComposerOpen, setSmsComposerOpen] = useState(false);
   const [smsOptions, setSmsOptions] = useState(null);
   const [smsFromNumber, setSmsFromNumber] = useState("");
@@ -560,6 +562,31 @@ export default function ChatsPage() {
       setSmsFromNumber(nextSmsOptions?.defaultNumber || "");
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!requestedLeadEmailId) {
+      setLeadEmailTarget(null);
+      return undefined;
+    }
+    let active = true;
+    setCategoryFilter("email");
+    api.get(`/leads/${encodeURIComponent(requestedLeadEmailId)}`)
+      .then((response) => {
+        if (!active) return;
+        const lead = response.data.data;
+        setLeadEmailTarget({
+          id: lead.id,
+          fullName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.leadNumber,
+          email: lead.email,
+          phone: lead.phone,
+        });
+        setError("");
+      })
+      .catch((reason) => {
+        if (active) setError(reason.response?.data?.message || "This lead could not be opened for email.");
+      });
+    return () => { active = false; };
+  }, [requestedLeadEmailId]);
 
   // "mine"/"unassigned" map straight to the backend's own scope values;
   // anything else is a specific colleague's id, sent as an explicit
@@ -1204,6 +1231,21 @@ export default function ChatsPage() {
     void loadLists({ silent: true });
   }
 
+  function closeLeadEmailComposer() {
+    setLeadEmailTarget(null);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("compose");
+      next.delete("lead");
+      return next;
+    }, { replace: true });
+  }
+
+  function handleLeadEmailSaved() {
+    closeLeadEmailComposer();
+    setCategoryFilter("email");
+  }
+
   function handleSmsSaved(message) {
     setSmsComposerOpen(false);
     setCategoryFilter("sms");
@@ -1611,6 +1653,21 @@ export default function ChatsPage() {
             lockChannel
             onClose={() => setEmailComposerOpen(false)}
             onSaved={handleEmailSaved}
+          />
+        ) : null}
+      </AnimatePresence>
+      <AnimatePresence>
+        {leadEmailTarget ? (
+          <CommunicationComposer
+            initialChannel="Email"
+            caseItem={{ id: null, client: null }}
+            lead={leadEmailTarget}
+            providers={communicationProviders}
+            permissions={commPermissions}
+            templates={communicationTemplates}
+            lockChannel
+            onClose={closeLeadEmailComposer}
+            onSaved={handleLeadEmailSaved}
           />
         ) : null}
       </AnimatePresence>

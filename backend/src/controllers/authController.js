@@ -1,6 +1,7 @@
 import prisma from "../services/prisma/client.js";
-import { generateAuthLink, updateAuthenticatedUser } from "../services/supabaseAuth.js";
+import { generateAuthLink, updateAuthenticatedUser, updateAuthUser } from "../services/supabaseAuth.js";
 import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
+import { verifyClientPortalInviteToken } from "../services/clientPortalInviteToken.js";
 import { logger } from "../services/logger.js";
 import { createHttpError } from "../utils/http.js";
 import { publicAppUrl } from "../utils/publicAppUrl.js";
@@ -116,23 +117,43 @@ export async function requestPasswordRecovery(req, res) {
   if (eligible) {
     try {
       const onboarding = user.status === "invited";
-      const generated = await generateAuthLink({
-        type: "recovery",
-        email,
-        fullName: user.fullName,
-        redirectTo: `${publicAppUrl()}${onboarding ? "/auth/accept-invite" : "/auth/reset-password"}`,
-      });
-      if (!generated?.actionLink) throw new Error("Supabase did not return a recovery link");
-      if (!user.authUserId && generated.user?.id) {
-        await prisma.user.update({ where: { id: user.id }, data: { authUserId: generated.user.id } });
+      let actionLink;
+      if (onboarding && user.role === "client") {
+        let authUserId = user.authUserId;
+        if (!authUserId) {
+          const generated = await generateAuthLink({
+            type: "invite",
+            email,
+            fullName: user.fullName,
+            redirectTo: `${publicAppUrl()}/auth/accept-invite`,
+          });
+          authUserId = generated?.user?.id;
+          if (!authUserId) throw new Error("Supabase did not return an invitation identity");
+          await prisma.user.update({ where: { id: user.id }, data: { authUserId } });
+        }
+        const token = createClientPortalInviteToken({ userId: user.id, authUserId });
+        actionLink = `${publicAppUrl()}/auth/accept-invite#invite_token=${encodeURIComponent(token)}`;
+      } else {
+        const generated = await generateAuthLink({
+          type: "recovery",
+          email,
+          fullName: user.fullName,
+          redirectTo: `${publicAppUrl()}${onboarding ? "/auth/accept-invite" : "/auth/reset-password"}`,
+        });
+        if (!generated?.actionLink) throw new Error("Supabase did not return a recovery link");
+        actionLink = generated.actionLink;
+        if (!user.authUserId && generated.user?.id) {
+          await prisma.user.update({ where: { id: user.id }, data: { authUserId: generated.user.id } });
+        }
       }
       await sendAccountAccessEmail({
         agencyId: user.agencyId,
         email,
         fullName: user.fullName,
-        actionLink: generated.actionLink,
+        actionLink,
         kind: onboarding ? "onboarding" : "reset",
         audience: user.role === "client" ? "client" : "staff",
+        linkValidityDays: onboarding && user.role === "client" ? 7 : null,
       });
       await recordActivity({
         agencyId: user.agencyId,
@@ -149,6 +170,111 @@ export async function requestPasswordRecovery(req, res) {
   }
 
   res.status(202).json({ success: true, message: PASSWORD_RECOVERY_RESPONSE });
+}
+
+async function clientInvitationFromToken(rawToken, database = prisma) {
+  const token = verifyClientPortalInviteToken(rawToken);
+  const user = await database.user.findUnique({
+    where: { id: token.sub },
+    select: {
+      id: true,
+      agencyId: true,
+      authUserId: true,
+      email: true,
+      fullName: true,
+      role: true,
+      status: true,
+      agency: { select: { id: true, name: true, onboardingStatus: true, accessStatus: true } },
+      memberships: {
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, agencyId: true, role: true },
+      },
+      clientUsers: {
+        orderBy: { isPrimary: "desc" },
+        select: { agencyId: true, clientId: true },
+      },
+    },
+  });
+  const membership = user?.memberships?.find(
+    (item) => item.agencyId === user.agencyId && item.role === "client",
+  );
+  const clientLink = user?.clientUsers?.find((item) => item.agencyId === user.agencyId);
+  if (
+    !user
+    || user.role !== "client"
+    || user.authUserId !== token.aid
+    || !membership
+    || !clientLink
+  ) {
+    throw createHttpError(404, "This onboarding invitation is no longer available.", "CLIENT_INVITE_NOT_FOUND");
+  }
+  if (user.status === "active") {
+    throw createHttpError(410, "This onboarding link has already been used. Sign in with your email and password.", "CLIENT_INVITE_USED");
+  }
+  if (user.status !== "invited" || user.agency.onboardingStatus !== "active" || user.agency.accessStatus !== "active") {
+    throw createHttpError(403, "This client portal account is not currently available.", "ACCOUNT_UNAVAILABLE");
+  }
+  return { token, user, membership, clientLink };
+}
+
+// GET is deliberately read-only: mail security scanners may follow the URL,
+// but cannot consume the invitation. Activation happens only on the explicit
+// password-form POST below.
+export async function getClientPortalInvitation(req, res) {
+  const { token, user } = await clientInvitationFromToken(req.header("x-client-invitation"));
+  res.json({
+    success: true,
+    data: {
+      fullName: user.fullName,
+      agencyName: user.agency.name,
+      expiresAt: new Date(token.exp).toISOString(),
+    },
+  });
+}
+
+export async function acceptClientPortalInvitation(req, res) {
+  const password = String(req.body?.password || "");
+  if (password.length < 10 || password.length > 128) {
+    throw createHttpError(400, "Password must be between 10 and 128 characters.", "VALIDATION_ERROR");
+  }
+  const rawToken = req.body?.token;
+  const signedInvitation = verifyClientPortalInviteToken(rawToken);
+  const accepted = await prisma.$transaction(async (tx) => {
+    // Serialize acceptance for this user across every API instance. Without
+    // this lock, two simultaneous submissions could race and leave whichever
+    // password reached Supabase last as the unexpected winner.
+    await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${signedInvitation.sub}))`;
+    const { user, membership, clientLink } = await clientInvitationFromToken(rawToken, tx);
+    await updateAuthUser(user.authUserId, {
+      password,
+      email_confirm: true,
+      ban_duration: "none",
+      user_metadata: { full_name: user.fullName },
+    });
+    await tx.user.update({
+      where: { id: user.id },
+      data: { status: "active", mustChangePassword: false },
+    });
+    await tx.agencyMember.update({
+      where: { id: membership.id },
+      data: { mustChangePassword: false },
+    });
+    return {
+      agencyId: user.agencyId,
+      userId: user.id,
+      clientId: clientLink.clientId,
+      email: user.email,
+    };
+  }, { timeout: 15_000 });
+  await recordActivity({
+    agencyId: accepted.agencyId,
+    userId: accepted.userId,
+    clientId: accepted.clientId,
+    action: "CLIENT_PORTAL_ACCOUNT_ACTIVATED",
+    details: "Client portal account activated",
+  });
+  res.json({ success: true, data: { email: accepted.email }, message: "Your client portal account is ready." });
 }
 
 export async function getInvitation(req, res) {
@@ -205,4 +331,4 @@ export async function acceptMemberInvitation(req, res) {
   res.json({ success: true, message: isFirstActivation ? "Your CaseDesk account is ready." : "Your password has been updated." });
 }
 
-export default { getMe, logout, changePassword, requestPasswordRecovery, getInvitation, acceptMemberInvitation };
+export default { getMe, logout, changePassword, requestPasswordRecovery, getClientPortalInvitation, acceptClientPortalInvitation, getInvitation, acceptMemberInvitation };

@@ -32,7 +32,7 @@ Portal routes in `frontend/src/routes/AppRoutes.jsx`, pages under `frontend/src/
 [[Supabase]] Auth/Realtime/Storage and provider-backed subfeatures.
 
 ## Business Rules
-A [[ClientUser]] links the app identity to one agency client. Default, client-level, and case-level policies resolve to an effective allow/deny; suspension overrides actions. Resource IDs are resolved to a case before policy checks. A sentinel represents case-less general chat.
+A [[ClientUser]] links the app identity to one agency client. New client accounts are activated through a signed seven-day onboarding link. Loading that link is non-consuming so email-security scanners cannot invalidate it; submitting the password verifies the signed user/auth-identity binding, active client membership, tenant state, and then activates the account once. Default, client-level, and case-level policies resolve to an effective allow/deny; suspension overrides actions. Resource IDs are resolved to a case before policy checks. A sentinel represents case-less general chat.
 
 ## Permissions
 Client role, tenant link, record ownership, area policy, and resource policy all apply. Staff portal-management requires the `manageClientPortal` capability.

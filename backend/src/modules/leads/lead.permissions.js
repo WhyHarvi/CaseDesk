@@ -55,13 +55,14 @@ export function canCreateLead(req) {
   return ["admin", "consultant", "frontdesk", "manager"].includes(req.auth.role);
 }
 
-// Workflow fields (stage, priority) an admin can always edit; a consultant
-// only on leads they currently own. Frontdesk never — they triage the queue,
-// they don't drive the pipeline. Ownership reassignment is stricter still
-// (admin only, see lead.routes.js) since it's the one workflow edit that
-// changes who else can act on the lead at all.
+// Workflow fields (stage, priority, retainer/payment status) an admin or
+// manager can always edit; a consultant only on leads they currently own.
+// Frontdesk never — they triage the queue, they don't drive the pipeline.
+// Ownership reassignment is stricter still (admin/manager only, see
+// lead.routes.js) since it's the one workflow edit that changes who else
+// can act on the lead at all.
 export function assertLeadWorkflowEditable(req, lead) {
-  if (req.auth.role === "admin") return;
+  if (["admin", "manager"].includes(req.auth.role)) return;
   if (req.auth.role === "consultant" && lead.ownerUserId === req.auth.userId) return;
-  throw createHttpError(403, "Only an admin or this lead's assigned consultant can change that.", "FORBIDDEN");
+  throw createHttpError(403, "Only an admin, manager, or this lead's assigned consultant can change that.", "FORBIDDEN");
 }
