@@ -3,7 +3,9 @@ import {
   Archive,
   CalendarDays,
   CalendarClock,
+  ChevronLeft,
   ChevronDown,
+  ChevronRight,
   Download,
   FileWarning,
   FilterX,
@@ -54,6 +56,8 @@ const defaultFrontDeskIntakeState = {
 const cardClassName =
   "rounded-3xl border border-white/70 bg-white/75 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl";
 const pillClassName = "inline-flex items-center rounded-full px-3.5 py-1.5 text-xs font-semibold leading-none";
+export const CLIENT_DIRECTORY_PAGE_SIZE = 25;
+const CLIENT_FETCH_BATCH_SIZE = 100;
 
 // Keeps the Add/Edit Client drawer open (and whatever was typed) across a
 // browser reload — sessionStorage rather than localStorage, so a stale draft
@@ -916,6 +920,8 @@ export default function Clients() {
     portalAccess.data.clients === "all" &&
     portalAccess.data.cases === "all";
   const [clients, setClients] = useState([]);
+  const [clientTotal, setClientTotal] = useState(0);
+  const [directoryPage, setDirectoryPage] = useState(1);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -953,8 +959,28 @@ export default function Clients() {
   async function loadClients() {
     try {
       setLoading(true);
-      const response = await api.get("/clients?limit=100");
-      setClients(response.data.data || []);
+      const firstResponse = await api.get("/clients", {
+        params: { page: 1, limit: CLIENT_FETCH_BATCH_SIZE },
+      });
+      const firstPage = firstResponse.data.data || [];
+      const total = Number(firstResponse.data.meta?.total ?? firstPage.length);
+      const pageCount = Math.max(1, Math.ceil(total / CLIENT_FETCH_BATCH_SIZE));
+      const allClients = [...firstPage];
+
+      // The directory's case, payment, document, and follow-up filters are
+      // derived from each client payload. Fetch every bounded API page so
+      // those filters remain agency-wide, while the UI below renders only 25
+      // clients at a time. Sequential requests also protect the small
+      // production DB pool during a hard reload.
+      for (let page = 2; page <= pageCount; page += 1) {
+        const response = await api.get("/clients", {
+          params: { page, limit: CLIENT_FETCH_BATCH_SIZE },
+        });
+        allClients.push(...(response.data.data || []));
+      }
+
+      setClients([...new Map(allClients.map((client) => [client.id, client])).values()]);
+      setClientTotal(total);
       setError("");
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Unable to load clients.");
@@ -1102,18 +1128,33 @@ export default function Clients() {
     return matchingClients;
   }, [activeView, caseTypeFilter, directoryOrder, enrichedClients, searchQuery, staffFilter, statusFilter]);
 
+  const directoryPageCount = Math.max(
+    1,
+    Math.ceil(filteredClients.length / CLIENT_DIRECTORY_PAGE_SIZE),
+  );
+  const visibleDirectoryPage = Math.min(directoryPage, directoryPageCount);
+  const pageStart = (visibleDirectoryPage - 1) * CLIENT_DIRECTORY_PAGE_SIZE;
+  const paginatedClients = filteredClients.slice(
+    pageStart,
+    pageStart + CLIENT_DIRECTORY_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setDirectoryPage(1);
+  }, [activeView, caseTypeFilter, directoryOrder, searchQuery, staffFilter, statusFilter]);
+
   const summary = useMemo(() => {
     const activeCases = enrichedClients.filter((client) => client.normalizedStatus === "Active").length;
     const documentsPending = enrichedClients.filter((client) => client.missingDocs > 0).length;
     const followUpsDue = enrichedClients.reduce((total, client) => total + client.followUpsDue, 0);
 
     return {
-      totalClients: enrichedClients.length,
+      totalClients: clientTotal,
       activeCases,
       documentsPending,
       followUpsDue,
     };
-  }, [enrichedClients]);
+  }, [clientTotal, enrichedClients]);
 
   const hasActiveFilters =
     Boolean(searchQuery) ||
@@ -1410,6 +1451,7 @@ export default function Clients() {
       setDeletingId(client.id);
       await api.patch(`/clients/${client.id}/archive`);
       setClients((current) => current.filter((entry) => entry.id !== client.id));
+      setClientTotal((current) => Math.max(0, current - 1));
 
       if (editingClient?.id === client.id) {
         resetForm();
@@ -1623,8 +1665,10 @@ export default function Clients() {
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Client directory</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Showing {filteredClients.length} of {enrichedClients.length}{" "}
-                  {enrichedClients.length === 1 ? "client" : "clients"}
+                  {filteredClients.length
+                    ? `Showing ${pageStart + 1}–${Math.min(pageStart + CLIENT_DIRECTORY_PAGE_SIZE, filteredClients.length)} of ${filteredClients.length}`
+                    : "Showing 0 of 0"}{" "}
+                  {filteredClients.length === 1 ? "client" : "clients"}
                 </p>
               </div>
 
@@ -1661,7 +1705,7 @@ export default function Clients() {
                 />
               ))}
             </div>
-          ) : filteredClients.length ? (
+          ) : paginatedClients.length ? (
             <>
               {isDesktopLayout ? (
               <div className="overflow-x-auto">
@@ -1680,7 +1724,7 @@ export default function Clients() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredClients.map((client) => (
+                    {paginatedClients.map((client) => (
                       <tr key={client.id} className="border-b border-slate-100 transition hover:bg-sky-50/50">
                         <td className="px-6 py-5">
                           <div className="flex items-center gap-3">
@@ -1810,7 +1854,7 @@ export default function Clients() {
               </div>
               ) : (
               <div className="grid gap-4 p-5 sm:p-6">
-                {filteredClients.map((client) => (
+                {paginatedClients.map((client) => (
                   <ClientsMobileCard
                     key={client.id}
                     client={client}
@@ -1826,6 +1870,39 @@ export default function Clients() {
                 ))}
               </div>
               )}
+              {directoryPageCount > 1 ? (
+                <div className="flex flex-col gap-3 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                  <p className="text-center text-sm text-slate-500 sm:text-left">
+                    Page {visibleDirectoryPage} of {directoryPageCount} · 25 clients per page
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 sm:flex">
+                    <button
+                      type="button"
+                      disabled={visibleDirectoryPage <= 1 || loading}
+                      onClick={() => {
+                        setActiveActionMenuId(null);
+                        setDirectoryPage((current) => Math.max(1, current - 1));
+                      }}
+                      className="inline-flex h-10 items-center justify-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      disabled={visibleDirectoryPage >= directoryPageCount || loading}
+                      onClick={() => {
+                        setActiveActionMenuId(null);
+                        setDirectoryPage((current) => Math.min(directoryPageCount, current + 1));
+                      }}
+                      className="inline-flex h-10 items-center justify-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </>
           ) : (
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">

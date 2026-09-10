@@ -21,3 +21,14 @@ test("Clients.jsx loads the staff catalog only after the client list query has f
   assert.match(page, /disabled=\{loading\} onClick=\{loadClients\}/);
   assert.match(page, /\{loading \? "Trying again…" : "Try again"\}/);
 });
+
+test("Clients.jsx loads the complete scoped directory but renders it in 25-client pages", async () => {
+  const page = await source("../../frontend/src/pages/Clients.jsx");
+
+  assert.match(page, /CLIENT_DIRECTORY_PAGE_SIZE = 25/);
+  assert.match(page, /firstResponse\.data\.meta\?\.total/);
+  assert.match(page, /for \(let page = 2; page <= pageCount; page \+= 1\)/);
+  assert.match(page, /setClientTotal\(total\)/);
+  assert.match(page, /paginatedClients = filteredClients\.slice/);
+  assert.match(page, /Page \{visibleDirectoryPage\} of \{directoryPageCount\} · 25 clients per page/);
+});
