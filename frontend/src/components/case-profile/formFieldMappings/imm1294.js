@@ -1,4 +1,4 @@
-import { firstPassport, isoParts, maritalCode, splitApplicantName } from "../applicantFactCatalog";
+import { firstPassport, isoParts, maritalCode, resolveIrccApplicantName } from "../applicantFactCatalog";
 
 // Ported verbatim from the original hard-coded buildCaseFormAutofill — same
 // 19 facts, same order, same conditional facts, same PDF values. This file
@@ -33,18 +33,15 @@ export default {
   buildPdfValues(ctx) {
     const formData = ctx.formData;
     const client = ctx.client;
-    const applicantIdentity = formData.profileQuestionnaires?.applicantIdentity || {};
     const canadianStatus = formData.profileQuestionnaires?.canadianStatus || {};
     const passport = firstPassport(formData);
     const birth = isoParts(client.dateOfBirth);
-    const inferredName = splitApplicantName(client.fullName);
-    const familyName = applicantIdentity.familyName || inferredName.familyName;
-    const givenNames = applicantIdentity.givenNames || inferredName.givenNames;
+    const applicantName = resolveIrccApplicantName(ctx);
     return {
       ServiceIn31778: "English",
       UCIClientID31781: canadianStatus.uci || "",
-      FamilyName31784: familyName,
-      GivenName31785: givenNames,
+      FamilyName31784: applicantName.familyName,
+      GivenName31785: applicantName.givenNames,
       DOBYear31793: birth.year || "",
       DOBMonth31794: birth.month || "",
       DOBDay31795: birth.day || "",

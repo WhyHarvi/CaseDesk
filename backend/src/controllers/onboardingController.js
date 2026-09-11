@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import prisma from "../services/prisma/client.js";
+import { provisionDefaultWorkspaceSubscription } from "../services/commercialSubscriptionService.js";
 import { deleteAuthUser, inviteAuthUser, updateAuthenticatedUser } from "../services/supabaseAuth.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
@@ -66,6 +67,7 @@ export async function registerAgency(req, res) {
           country: input.country,
         },
       });
+      await provisionDefaultWorkspaceSubscription(tx, { agencyId: agency.id });
       const user = await tx.user.create({
         data: {
           agencyId: agency.id,
@@ -117,7 +119,11 @@ export async function registerAgency(req, res) {
     if (authUser?.id) await deleteAuthUser(authUser.id).catch(() => {});
     // Roll back the pending application records so a transient mail/Auth
     // failure can be retried safely with the same address.
-    await prisma.agency.delete({ where: { id: records.agency.id } }).catch(async () => {
+    await prisma.$transaction(async (tx) => {
+      await tx.subscriptionAuditLog.deleteMany({ where: { agencyId: records.agency.id } });
+      await tx.workspaceSubscription.deleteMany({ where: { agencyId: records.agency.id } });
+      await tx.agency.delete({ where: { id: records.agency.id } });
+    }).catch(async () => {
       await prisma.onboardingRequest.update({ where: { id: records.onboarding.id }, data: { status: "failed", failureCode: "INVITE_DELIVERY_FAILED" } }).catch(() => {});
     });
     throw createHttpError(503, "We could not send the invitation. Please try again later.", "INVITE_DELIVERY_FAILED");

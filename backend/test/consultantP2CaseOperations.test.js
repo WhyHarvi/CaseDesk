@@ -5,11 +5,12 @@ import test from "node:test";
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
 test("assigned-case applicants can be edited and safely detached", async () => {
-  const [controller, routes, overlay, card] = await Promise.all([
+  const [controller, routes, overlay, card, caseProfile] = await Promise.all([
     source("../src/controllers/caseApplicantController.js"),
     source("../src/routes/caseRoutes.js"),
     source("../../frontend/src/components/case-profile/applicants/ApplicantsOverlay.jsx"),
     source("../../frontend/src/components/case-profile/applicants/ApplicantCard.jsx"),
+    source("../../frontend/src/pages/CaseProfile.jsx"),
   ]);
 
   assert.match(routes, /router\.patch\("\/:id\/applicants\/:applicantId"/);
@@ -21,8 +22,13 @@ test("assigned-case applicants can be edited and safely detached", async () => {
   assert.match(controller, /case\.applicant\.updated/);
   assert.match(controller, /case\.applicant\.removed/);
   assert.match(overlay, /api\.patch\(`\/cases\/\$\{caseItem\.id\}\/applicants\/\$\{draft\.id\}`/);
+  assert.match(overlay, /if \(item\.isPrimary\) \{[\s\S]*onEditPrimary\?\.\(\)/);
+  assert.match(overlay, /relative z-30 flex shrink-0/);
+  assert.match(overlay, /relative z-0 flex-1 overflow-y-auto/);
   assert.match(overlay, /Remove from case/);
-  assert.match(card, /!applicant\.isPrimary/);
+  assert.match(card, /onClick=\{\(\) => onEdit\(applicant\)\}/);
+  assert.match(card, /!applicant\.isPrimary[\s\S]*onRemove\(applicant\)/);
+  assert.match(caseProfile, /onEditPrimary=\{\(\) => \{[\s\S]*setApplicantsOverlayOpen\(false\);[\s\S]*setEditingClient\(true\)/);
 });
 
 test("task cancellation preserves records and activity instead of deleting rows", async () => {

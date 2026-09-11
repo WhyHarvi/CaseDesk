@@ -203,7 +203,7 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
                   <input name="familyName" value={formState.familyName} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="Leave blank only if none" />
                 </label>
                 <div className={`md:col-span-2 rounded-2xl px-4 py-3 text-xs leading-5 ${nameNeedsReview ? "border border-amber-200 bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-500"}`}>
-                  {nameNeedsReview ? "These name parts were suggested from the old Full name. Verify them against the passport before saving. " : "Enter names exactly as shown on the passport. At least one name is required. "}
+                  {nameNeedsReview ? "These name parts were suggested from the old Full name. Verify them against the passport before saving. " : "Enter names exactly as shown on the passport. At least one name is required. Client Intake is the authoritative name source for government forms. "}
                   <span className="font-semibold">CRM display name: {composePersonFullName(formState.givenNames, formState.familyName) || "—"}</span>
                 </div>
 

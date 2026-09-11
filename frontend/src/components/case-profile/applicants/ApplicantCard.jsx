@@ -32,11 +32,9 @@ export default function ApplicantCard({ applicant, onEdit, onRemove }) {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => onEdit(applicant)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700"><Pencil className="h-3.5 w-3.5" /> Edit</button>
           {!applicant.isPrimary ? (
-            <>
-              <button type="button" onClick={() => onEdit(applicant)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-sky-300 hover:text-sky-700"><Pencil className="h-3.5 w-3.5" /> Edit</button>
-              <button type="button" onClick={() => onRemove(applicant)} className="inline-flex items-center gap-1.5 rounded-full border border-rose-100 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
-            </>
+            <button type="button" onClick={() => onRemove(applicant)} className="inline-flex items-center gap-1.5 rounded-full border border-rose-100 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
           ) : null}
           {applicant.communicationEmail ? (
             <a href={`mailto:${applicant.communicationEmail}`} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-950">

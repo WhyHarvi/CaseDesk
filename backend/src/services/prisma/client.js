@@ -58,6 +58,9 @@ const shouldReusePrisma =
   cachedPrisma.notificationPreference &&
   cachedPrisma.notificationDelivery &&
   cachedPrisma.questionnaireAssignment &&
+  cachedPrisma.subscriptionPlan &&
+  cachedPrisma.workspaceSubscription &&
+  cachedPrisma.subscriptionAuditLog &&
   hasRuntimeField(cachedPrisma, "SharedLibraryDocument", "clientDocuments") &&
   hasRuntimeField(
     cachedPrisma,

@@ -1,4 +1,4 @@
-import { splitApplicantName } from "../applicantFactCatalog";
+import { resolveIrccApplicantName, splitApplicantName } from "../applicantFactCatalog";
 
 // IMM 5476 — Use of a Representative. Unlike IMM 1294 (all applicant
 // biodata), most of this form is about the REPRESENTATIVE: their name,
@@ -28,13 +28,8 @@ export default {
   factKeys: ["familyName", "givenNames", "dateOfBirth", "email", "uci"],
   buildPdfValues(ctx) {
     const client = ctx.client || {};
-    const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
     const canadianStatus = ctx.formData.profileQuestionnaires?.canadianStatus || {};
-    const applicantName = normalizeIrccName({
-      familyName: applicantIdentity.familyName || client.familyName,
-      givenNames: applicantIdentity.givenNames || client.givenNames,
-      fullName: client.fullName,
-    });
+    const applicantName = resolveIrccApplicantName(ctx);
 
     const representative = ctx.representative || {};
     const representativeName = normalizeIrccName({
@@ -64,7 +59,9 @@ export default {
 
       // Section A — applicant (the client)
       "553R": applicantName.familyName,
-      "554R": applicantName.givenNames,
+      // XFA ignores empty values in the generic dispatcher. A non-breaking
+      // space visibly stays blank while clearing a stale given-name value.
+      "554R": applicantName.givenNames || "\u00a0",
       "555R": String(client.dateOfBirth || "").slice(0, 10),
       "556R": client.email || "",
       "557R": client.email ? "" : client.phone || "",
@@ -100,13 +97,7 @@ export default {
     };
   },
   getWarnings(ctx) {
-    const client = ctx.client || {};
-    const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
-    const applicantName = normalizeIrccName({
-      familyName: applicantIdentity.familyName || client.familyName,
-      givenNames: applicantIdentity.givenNames || client.givenNames,
-      fullName: client.fullName,
-    });
+    const applicantName = resolveIrccApplicantName(ctx);
     return applicantName.singleName
       ? ["This applicant has no family name. Their given name was moved to the family-name field and the given-name field was left blank, following IRCC's single-name rule. Verify it against the passport before saving."]
       : [];

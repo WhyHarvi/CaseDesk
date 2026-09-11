@@ -1820,6 +1820,10 @@ export default function CaseProfile() {
         <ApplicantsOverlay
           caseItem={caseItem}
           onClose={() => setApplicantsOverlayOpen(false)}
+          onEditPrimary={() => {
+            setApplicantsOverlayOpen(false);
+            setEditingClient(true);
+          }}
         />
       ) : null}
 

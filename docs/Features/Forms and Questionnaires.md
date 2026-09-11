@@ -31,7 +31,7 @@ Government application workflows, applicants, document generation, and case comp
 [[Supabase]] Storage.
 
 ## Business Rules
-Case forms are versioned copies with source and copy type. Field ownership/fillability and status control staff/client editing. Mappings draw from structured case/client/applicant facts. Signature flows and rendered PDFs preserve audit events. Opening an unlocked IMM 5476 automatically enables in-form resizing for every available signature; a client-signed copy exposes both the representative and client signatures on their own PDF pages, without separate list controls. The editing preview removes only the existing ink annotations from the two signature boxes in the latest pre-signature copy, preserving all form fields, and each resize regenerates the signed copy with each signer stamped exactly once.
+Case forms are versioned copies with source and copy type. Field ownership/fillability and status control staff/client editing. Mappings draw from structured case/client/applicant facts. Applicant Identity questionnaires collect family and given names separately, but government-form mappings select the whole name pair from one source: Client Intake first, then the questionnaire only when intake has neither structured name. Signature flows and rendered PDFs preserve audit events. Opening an unlocked IMM 5476 automatically enables in-form resizing for every available signature; a client-signed copy exposes both the representative and client signatures on their own PDF pages, without separate list controls. The editing preview removes only the existing ink annotations from the two signature boxes in the latest pre-signature copy, preserving all form fields, and each resize regenerates the signed copy with each signer stamped exactly once.
 
 ## Permissions
 Staff need the Forms case tab and case access. `formPermissions.js` and portal policy restrict assigned, client-fillable, review, and signature actions.
@@ -43,4 +43,4 @@ Creates versions/audits, stores rendered files, requests client action, and can 
 High because mapping or version changes can corrupt regulated form output.
 
 ## Tests
-`backend/test/caseFormAssignedAccess.test.js`, `caseFormSignatureMigration.test.js`, `imm5476Workflow.test.js`, `clientFormSignatureNotice.test.js`, and case-information suites.
+`backend/test/caseFormAssignedAccess.test.js`, `caseFormSignatureMigration.test.js`, `imm5476Workflow.test.js`, `clientFormSignatureNotice.test.js`, `applicantNameSource.test.js`, and case-information suites.

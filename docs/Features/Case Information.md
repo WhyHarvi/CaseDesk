@@ -30,7 +30,7 @@ Provides structured, section-based immigration facts shared by cases, clients, a
 None directly.
 
 ## Business Rules
-The catalog resolves required sections by case type. Mutations synchronize canonical profile data and section completion. A background drift detector finds data that no longer agrees with expected projections.
+The catalog resolves required sections by case type. Mutations synchronize canonical profile data and section completion. A background drift detector finds data that no longer agrees with expected projections. Applicant family and given names are resolved as one pair: structured Client Intake names are authoritative when either intake name is present, questionnaire names are the fallback only when both intake fields are empty, and fields from the two sources are never combined.
 
 ## Permissions
 Requires case access and relevant case tabs; portal questionnaire actions use portal policy.
@@ -42,4 +42,4 @@ Changes completion state, form-fill sources, and potentially client/applicant pr
 High because field mappings and ownership rules can silently alter generated government forms.
 
 ## Tests
-`backend/test/caseInformationCatalog.test.js`, `caseInformationResolver.test.js`, `caseInformationCompletion.test.js`, `caseInformationWorkspace.test.js`, `caseInformationVisibility.test.js`, and `applicantFactCatalogSectionSync.test.js`.
+`backend/test/caseInformationCatalog.test.js`, `caseInformationResolver.test.js`, `caseInformationCompletion.test.js`, `caseInformationWorkspace.test.js`, `caseInformationVisibility.test.js`, `applicantFactCatalogSectionSync.test.js`, and `applicantNameSource.test.js`.

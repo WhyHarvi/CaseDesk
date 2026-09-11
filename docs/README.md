@@ -27,6 +27,7 @@ This vault describes the current React, Express, Prisma, and PostgreSQL applicat
 - [[Client Portal]] · [[Users and Onboarding]] · [[Notifications]]
 - [[Internal Chat]] · [[Incentives and Workload]] · [[Case Easy Import]]
 - [[Dashboard and Search]] · [[Support and AI Assistant]]
+- [[Subscriptions and Entitlements]]
 
 ## Integrations
 
@@ -37,6 +38,7 @@ This vault describes the current React, Express, Prisma, and PostgreSQL applicat
 
 - [[Database-Overview]]
 - [[Agency]] · [[User]] · [[AgencyMember]] · [[Client]] · [[Case]] · [[Lead]]
+- [[Commercial Subscription]]
 - [[ClientDocument]] · [[CaseForm]] · [[Appointment]] · [[CommunicationConversation]]
 - [[CaseInvoice]] · [[Payment]] · [[CasePaymentSchedule]] · [[Notification]]
 - [[PortalAccessPolicy]] · [[ActivityLog]]
@@ -45,6 +47,7 @@ This vault describes the current React, Express, Prisma, and PostgreSQL applicat
 
 - [[Manager Role Permissions Proposal]]
 - [[Credit Card Surcharge Proposal]]
+- [[SaaS Commercial Billing with QuickBooks]]
 
 ## Critical Dependency Chains
 
@@ -54,9 +57,11 @@ This vault describes the current React, Express, Prisma, and PostgreSQL applicat
 4. [[Appointments and Booking]] → [[Zoom]] / [[Microsoft 365]] / [[SMTP and IMAP]] / [[Twilio]] → reminders and [[Notifications]].
 5. [[Communications]] → outbox workers → [[Microsoft 365]] / [[SMTP and IMAP]] / [[Twilio]] → webhook reconciliation and audit records.
 6. [[Leads]] → public/provider intake → assignment and consultation → [[Clients]] and [[Cases]].
+7. [[Subscriptions and Entitlements]] → subscription state + feature entitlement → [[Authorization]] → protected CRM modules.
+8. [[Subscriptions and Entitlements]] → CaseDesk billing scheduler → [[QuickBooks Online]] → QuickBooks Payments → payment reconciliation.
 
 ## High-Risk Systems
 
-- Critical: [[Authentication]], [[Authorization]], [[Multi-Tenancy]], [[Billing and Payments]], [[Client Portal]].
+- Critical: [[Authentication]], [[Authorization]], [[Multi-Tenancy]], [[Billing and Payments]], [[Subscriptions and Entitlements]], [[Client Portal]].
 - High: [[Cases]], [[Leads]], [[Communications]], [[Appointments and Booking]], [[Forms and Questionnaires]], [[Notifications]], [[Incentives and Workload]].
 - Medium: remaining operational features and integrations; see each note's frontmatter and Change Risk section.

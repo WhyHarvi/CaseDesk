@@ -9,9 +9,15 @@ import { validatedSignatureStrokes } from "../src/utils/signatureStrokes.js";
 const source = async (relative) => readFile(new URL(relative, import.meta.url), "utf8");
 
 test("IMM 5476 appointment mapping forces the A/B/E purpose and respects the IRCC single-name rule", async () => {
-  const mapping = await source("../../frontend/src/components/case-profile/formFieldMappings/imm5476.js");
+  const [mapping, facts] = await Promise.all([
+    source("../../frontend/src/components/case-profile/formFieldMappings/imm5476.js"),
+    source("../../frontend/src/components/case-profile/applicantFactCatalog.js"),
+  ]);
   assert.match(mapping, /"547R": true/);
-  assert.match(mapping, /if \(explicitGiven\) return \{ familyName: explicitGiven, givenNames: "", singleName: true \}/);
+  assert.match(mapping, /resolveIrccApplicantName\(ctx\)/);
+  assert.match(mapping, /"554R": applicantName\.givenNames \|\| "\\u00a0"/);
+  assert.match(facts, /if \(!clientPair\.familyName && !clientPair\.givenNames\)/);
+  assert.match(facts, /return \{ familyName: selected\.givenNames, givenNames: "", singleName: true, source, inferred \}/);
   assert.match(mapping, /representative\.licenseNumber/);
   assert.match(mapping, /"102R": false, "101R": false, "100R": false, "97R": true, "96R": false, "95R": false/);
 });

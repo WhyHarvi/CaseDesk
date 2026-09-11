@@ -35,6 +35,10 @@ Cases are soft-deleted with `deletedAt`, can be archived, and record stage histo
 
 The case register's Status filter uses the canonical case statuses and only offers statuses present in the currently loaded Active, Closed, Archived, or Trash register. Stage values such as `Ready` and `Submitted` remain in the separate Stage filter.
 
+Global case-type options also include PR card renewal, Indian and Canadian passport renewal, and OCI card application. Common legacy or shorthand labels are canonicalized to these display names across case and lead workflows.
+
+The case-profile Applicants workspace exposes an Edit action for every person. The synthetic principal-applicant row hands off to the client editor because its identity and contact data live on `Client`; additional applicant rows continue to edit their scoped `ImmigrationProfile`, and only those additional profiles can be removed from a case.
+
 ## Permissions
 Case reads use `caseAccessWhere`; case-linked child resources must use case-linked predicates. Staff roles and per-user case page/tab access are both enforced. Administrators and managers can manage a case's required RCIC, Case Worker, collaborators, and optional case roles when they can access that case. Consultants can manage Collaboration only when they hold the RCIC team role globally or on that case; front-desk users cannot change case assignments.
 

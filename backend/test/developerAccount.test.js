@@ -22,8 +22,13 @@ test("developer access is isolated behind its own role, route, and aggregate end
     controller.indexOf("export async function listDeveloperAgencies"),
   );
   assert.doesNotMatch(overview, /fullName|email|caseType|description/);
-  assert.match(routes, /path="\/developer"/);
-  assert.match(dashboard, /Aggregate platform telemetry only/);
+  assert.match(routes, /path="\/developer\/:section\?"/);
+  assert.match(dashboard, /CaseDesk Platform Admin/);
+  assert.match(dashboard, /Operations, subscriptions, and commercial access/);
+  assert.match(dashboard, /useParams\(\)/);
+  assert.match(dashboard, /navigate\(`\/developer\/\$\{key\}`\)/);
+  assert.match(dashboard, /navigate\(`\/developer\/\$\{section\}`, \{ replace: true \}\)/);
+  assert.doesNotMatch(dashboard, /useState\("overview"\)/);
 });
 
 test("developer provisioning keeps credentials out of source and replaces matching identities", async () => {

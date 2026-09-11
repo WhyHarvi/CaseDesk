@@ -8,6 +8,8 @@ risk: high
 
 The frontend is a React 18 SPA built by Vite. `frontend/src/main.jsx` composes BrowserRouter, TanStack Query, authentication, notification, softphone, and error-recovery providers. `frontend/src/routes/AppRoutes.jsx` lazy-loads public, staff, developer, and [[Client Portal]] routes.
 
+Platform Admin uses route-addressable sections under `/developer/:section?`. `/developer` and unknown section names normalize to `/developer/overview`; valid sections such as `/developer/subscriptions` and `/developer/workspaces` preserve the active screen across refreshes and browser history. The entire route family remains wrapped by `DeveloperRoute`; URLs are navigation state, not an authorization boundary.
+
 ## Structure
 
 - `frontend/src/pages/`: staff/public top-level screens.

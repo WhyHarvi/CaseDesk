@@ -42,11 +42,20 @@ graph TD
   Notifications --> WebPush[Web Push]
   Notifications --> Communications
   API --> AI[Ollama / Nova]
+  API --> Subscription[Subscription & Entitlement Engine]
+  Subscription --> Authz[Feature + Limit Enforcement]
+  Authz --> Cases
+  Authz --> Billing
+  Authz --> Communications
+  Authz --> Appointments
+  Subscription --> CommercialBilling[Commercial Billing Scheduler]
+  CommercialBilling --> QBO
+  QBO --> QBPayments[QuickBooks Payments]
 ```
 
 ## Graph Notes
 
-[[Frontend-Architecture]] · [[API-Architecture]] · [[Authentication]] · [[Multi-Tenancy]] · [[Database-Overview]] · [[Clients]] · [[Cases]] · [[Case Information]] · [[Leads]] · [[Documents]] · [[Forms and Questionnaires]] · [[Workflows and Tasks]] · [[Billing and Payments]] · [[Incentives and Workload]] · [[Appointments and Booking]] · [[Communications]] · [[Client Portal]] · [[Notifications]] · [[Supabase]] · [[QuickBooks Online]] · [[Twilio]] · [[Microsoft 365]] · [[SMTP and IMAP]] · [[Zoom]] · [[Meta Lead Ads]] · [[Web Push]] · [[Ollama]]
+[[Frontend-Architecture]] · [[API-Architecture]] · [[Authentication]] · [[Multi-Tenancy]] · [[Database-Overview]] · [[Subscriptions and Entitlements]] · [[Clients]] · [[Cases]] · [[Case Information]] · [[Leads]] · [[Documents]] · [[Forms and Questionnaires]] · [[Workflows and Tasks]] · [[Billing and Payments]] · [[Incentives and Workload]] · [[Appointments and Booking]] · [[Communications]] · [[Client Portal]] · [[Notifications]] · [[Supabase]] · [[QuickBooks Online]] · [[Twilio]] · [[Microsoft 365]] · [[SMTP and IMAP]] · [[Zoom]] · [[Meta Lead Ads]] · [[Web Push]] · [[Ollama]]
 
 ## Worker Topology
 

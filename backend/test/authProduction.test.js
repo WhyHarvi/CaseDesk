@@ -33,6 +33,15 @@ test("agency onboarding activation updates identity and tenant state atomically"
   assert.match(controller, /status: "completed"/);
 });
 
+test("new agency registration provisions the developer-selected commercial default atomically", async () => {
+  const controller = await source("../src/controllers/onboardingController.js");
+  const registrationSection = controller.slice(controller.indexOf("export async function registerAgency"), controller.indexOf("export async function getOnboardingStatus"));
+  assert.match(registrationSection, /prisma\.\$transaction/);
+  assert.match(registrationSection, /provisionDefaultWorkspaceSubscription\(tx, \{ agencyId: agency\.id \}\)/);
+  assert.match(registrationSection, /subscriptionAuditLog\.deleteMany/);
+  assert.match(registrationSection, /workspaceSubscription\.deleteMany/);
+});
+
 test("consultants use secure invitations instead of temporary passwords", async () => {
   const controller = await source("../src/controllers/adminConsultantController.js");
   assert.match(controller, /generateAuthLink/);

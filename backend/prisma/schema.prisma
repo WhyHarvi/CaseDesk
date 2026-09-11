@@ -49,6 +49,42 @@ enum AgencyAccessStatus {
   blocked
 }
 
+enum CommercialFeatureValueType {
+  boolean
+  integer
+  decimal
+}
+
+enum CommercialPlanVisibility {
+  public
+  private
+  internal
+}
+
+enum CommercialBillingInterval {
+  monthly
+  annual
+  custom
+}
+
+enum WorkspaceSubscriptionStatus {
+  trialing
+  active
+  past_due
+  grace_period
+  suspended
+  cancelled
+  read_only
+}
+
+enum CommercialBillingProvider {
+  quickbooks
+  manual
+  stripe
+  paddle
+  other
+}
+
 enum OnboardingRequestStatus {
   pending
   invited
@@ -743,8 +779,242 @@ model Agency {
   internalChatAttachments         InternalChatAttachment[]
   internalChatMessageReactions    InternalChatMessageReaction[]
   communicationMessageReactions   CommunicationMessageReaction[]
+  commercialSubscription          WorkspaceSubscription?
+  commercialFeatureOverrides      WorkspaceFeatureOverride[]
+  commercialLimitOverrides        WorkspaceLimitOverride[]
+  commercialEntitlementSnapshot   WorkspaceEntitlementSnapshot?
+  commercialAuditLogs             SubscriptionAuditLog[]
 
   @@map("agencies")
+}
+
+model CommercialModule {
+  id          String              @id @default(uuid())
+  key         String              @unique
+  name        String
+  description String?
+  isActive    Boolean             @default(true) @map("is_active")
+  sortOrder   Int                 @default(0) @map("sort_order")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+  features    CommercialFeature[]
+  limits      CommercialLimit[]
+
+  @@index([isActive, sortOrder])
+  @@map("commercial_modules")
+}
+
+model CommercialFeature {
+  id           String                     @id @default(uuid())
+  moduleId     String                     @map("module_id")
+  key          String                     @unique
+  name         String
+  description  String?
+  valueType    CommercialFeatureValueType @default(boolean) @map("value_type")
+  isActive     Boolean                    @default(true) @map("is_active")
+  sortOrder    Int                        @default(0) @map("sort_order")
+  createdAt    DateTime                   @default(now()) @map("created_at")
+  updatedAt    DateTime                   @updatedAt @map("updated_at")
+  module       CommercialModule           @relation(fields: [moduleId], references: [id], onDelete: Restrict)
+  planFeatures PlanFeature[]
+  overrides    WorkspaceFeatureOverride[]
+
+  @@index([moduleId, isActive, sortOrder])
+  @@map("commercial_features")
+}
+
+model CommercialLimit {
+  id          String                     @id @default(uuid())
+  moduleId    String                     @map("module_id")
+  key         String                     @unique
+  name        String
+  description String?
+  unit        String?
+  valueType   CommercialFeatureValueType @default(integer) @map("value_type")
+  isMetered   Boolean                    @default(false) @map("is_metered")
+  isActive    Boolean                    @default(true) @map("is_active")
+  sortOrder   Int                        @default(0) @map("sort_order")
+  createdAt   DateTime                   @default(now()) @map("created_at")
+  updatedAt   DateTime                   @updatedAt @map("updated_at")
+  module      CommercialModule           @relation(fields: [moduleId], references: [id], onDelete: Restrict)
+  planLimits  PlanLimit[]
+  overrides   WorkspaceLimitOverride[]
+
+  @@index([moduleId, isActive, sortOrder])
+  @@map("commercial_limits")
+}
+
+model SubscriptionPlan {
+  id            String                   @id @default(uuid())
+  key           String                   @unique
+  name          String
+  description   String?
+  visibility    CommercialPlanVisibility @default(public)
+  isActive      Boolean                  @default(true) @map("is_active")
+  isLegacy      Boolean                  @default(false) @map("is_legacy")
+  trialDays     Int                      @default(0) @map("trial_days")
+  isDefaultForNewWorkspaces Boolean       @default(false) @map("is_default_for_new_workspaces")
+  sortOrder     Int                      @default(0) @map("sort_order")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+  prices        SubscriptionPlanPrice[]
+  features      PlanFeature[]
+  limits        PlanLimit[]
+  subscriptions WorkspaceSubscription[]
+
+  @@index([isActive, visibility, sortOrder])
+  @@map("subscription_plans")
+}
+
+model SubscriptionPlanPrice {
+  id              String                    @id @default(uuid())
+  planId          String                    @map("plan_id")
+  currency        String                    @default("CAD")
+  billingInterval CommercialBillingInterval @map("billing_interval")
+  amount          Decimal                   @db.Decimal(12, 2)
+  isActive        Boolean                   @default(true) @map("is_active")
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  updatedAt       DateTime                  @updatedAt @map("updated_at")
+  plan            SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, currency, billingInterval])
+  @@index([currency, billingInterval, isActive])
+  @@map("subscription_plan_prices")
+}
+
+model PlanFeature {
+  id        String            @id @default(uuid())
+  planId    String            @map("plan_id")
+  featureId String            @map("feature_id")
+  enabled   Boolean           @default(true)
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  plan      SubscriptionPlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+  feature   CommercialFeature @relation(fields: [featureId], references: [id], onDelete: Restrict)
+
+  @@unique([planId, featureId])
+  @@index([featureId])
+  @@map("plan_features")
+}
+
+model PlanLimit {
+  id          String           @id @default(uuid())
+  planId      String           @map("plan_id")
+  limitId     String           @map("limit_id")
+  value       Decimal?         @db.Decimal(18, 4)
+  isUnlimited Boolean          @default(false) @map("is_unlimited")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  plan        SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  limit       CommercialLimit  @relation(fields: [limitId], references: [id], onDelete: Restrict)
+
+  @@unique([planId, limitId])
+  @@index([limitId])
+  @@map("plan_limits")
+}
+
+model WorkspaceSubscription {
+  id                 String                      @id @default(uuid())
+  agencyId           String                      @unique @map("agency_id")
+  planId             String                      @map("plan_id")
+  status             WorkspaceSubscriptionStatus @default(active)
+  billingInterval    CommercialBillingInterval   @default(monthly) @map("billing_interval")
+  billingProvider    CommercialBillingProvider   @default(quickbooks) @map("billing_provider")
+  currency           String                      @default("CAD")
+  negotiatedAmount   Decimal?                    @map("negotiated_amount") @db.Decimal(12, 2)
+  currentPeriodStart DateTime?                   @map("current_period_start")
+  currentPeriodEnd   DateTime?                   @map("current_period_end")
+  trialStartsAt      DateTime?                   @map("trial_starts_at")
+  trialEndsAt        DateTime?                   @map("trial_ends_at")
+  graceEndsAt        DateTime?                   @map("grace_ends_at")
+  nextBillingAt      DateTime?                   @map("next_billing_at")
+  providerCustomerId String?                     @map("provider_customer_id")
+  createdAt          DateTime                    @default(now()) @map("created_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+  agency             Agency                      @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  plan               SubscriptionPlan            @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([planId, status])
+  @@index([status, nextBillingAt])
+  @@map("workspace_subscriptions")
+}
+
+model WorkspaceFeatureOverride {
+  id          String            @id @default(uuid())
+  agencyId    String            @map("agency_id")
+  featureId   String            @map("feature_id")
+  enabled     Boolean
+  startsAt    DateTime?         @map("starts_at")
+  expiresAt   DateTime?         @map("expires_at")
+  reason      String
+  createdById String?           @map("created_by_id")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  agency      Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  feature     CommercialFeature @relation(fields: [featureId], references: [id], onDelete: Restrict)
+  createdBy   User?             @relation("CommercialFeatureOverrideCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, featureId])
+  @@index([agencyId, startsAt, expiresAt])
+  @@index([featureId])
+  @@map("workspace_feature_overrides")
+}
+
+model WorkspaceLimitOverride {
+  id          String          @id @default(uuid())
+  agencyId    String          @map("agency_id")
+  limitId     String          @map("limit_id")
+  value       Decimal?        @db.Decimal(18, 4)
+  isUnlimited Boolean         @default(false) @map("is_unlimited")
+  startsAt    DateTime?       @map("starts_at")
+  expiresAt   DateTime?       @map("expires_at")
+  reason      String
+  createdById String?         @map("created_by_id")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  agency      Agency          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  limit       CommercialLimit @relation(fields: [limitId], references: [id], onDelete: Restrict)
+  createdBy   User?           @relation("CommercialLimitOverrideCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, limitId])
+  @@index([agencyId, startsAt, expiresAt])
+  @@index([limitId])
+  @@map("workspace_limit_overrides")
+}
+
+model WorkspaceEntitlementSnapshot {
+  agencyId   String    @id @map("agency_id")
+  revision   Int       @default(1)
+  accessMode String    @map("access_mode")
+  features   Json      @default("{}")
+  limits     Json      @default("{}")
+  sources    Json      @default("{}")
+  computedAt DateTime  @default(now()) @map("computed_at")
+  validUntil DateTime? @map("valid_until")
+  agency     Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([validUntil])
+  @@map("workspace_entitlement_snapshots")
+}
+
+model SubscriptionAuditLog {
+  id          String   @id @default(uuid())
+  agencyId    String?  @map("agency_id")
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  before      Json?
+  after       Json?
+  reason      String
+  createdAt   DateTime @default(now()) @map("created_at")
+  agency      Agency?  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  actorUser   User?    @relation("CommercialAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId])
+  @@map("subscription_audit_logs")
 }
 
 model AutomatedReminderPolicy {
@@ -2228,6 +2498,9 @@ model User {
   uploadedInternalChatAttachments      InternalChatAttachment[]        @relation("UploadedInternalChatAttachmentUser")
   internalChatMessageReactions         InternalChatMessageReaction[]
   communicationMessageReactions        CommunicationMessageReaction[]
+  createdCommercialFeatureOverrides    WorkspaceFeatureOverride[]      @relation("CommercialFeatureOverrideCreator")
+  createdCommercialLimitOverrides      WorkspaceLimitOverride[]        @relation("CommercialLimitOverrideCreator")
+  commercialAuditActions               SubscriptionAuditLog[]          @relation("CommercialAuditActor")
 
   @@index([agencyId])
   @@index([authUserId])

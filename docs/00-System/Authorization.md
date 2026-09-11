@@ -13,7 +13,7 @@ risk: critical
 3. `backend/src/services/portalAccessService.js` gates staff pages, case tabs, capabilities, and `none`/`assigned`/`all` data scope from [[AgencyMember]].`permissions`.
 4. `clientAccessWhere`, `caseAccessWhere`, and related-record helpers add assignment/client ownership constraints.
 5. Route and controller-specific checks protect mutations; [[Client Portal]] additionally uses `backend/src/middleware/clientPortalPolicy.js` and [[PortalAccessPolicy]].
-6. `backend/src/middleware/productionSecurity.js` and controller checks enforce read-only agency mode for writes.
+6. `requireAuth` exposes read-only agency state as `req.auth.readOnly`. A shared mutation guard is not implemented yet, so commercial subscription suspension must not rely on this flag until centralized write enforcement and its exceptions are added and tested.
 
 Frontend guards in `frontend/src/auth/AuthRoutes.jsx` and `frontend/src/auth/portalAccess.js` improve navigation but are not a security boundary.
 

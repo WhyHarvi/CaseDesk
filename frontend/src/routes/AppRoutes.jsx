@@ -217,7 +217,7 @@ export default function AppRoutes() {
       />
       <Route path="/auth/reset-password" element={<ResetPassword />} />
       <Route path="/change-password" element={<ChangePassword />} />
-      <Route path="/developer" element={<DeveloperRoute><Deferred><DeveloperDashboard /></Deferred></DeveloperRoute>} />
+      <Route path="/developer/:section?" element={<DeveloperRoute><Deferred><DeveloperDashboard /></Deferred></DeveloperRoute>} />
       <Route
         path="/legal/privacy"
         element={

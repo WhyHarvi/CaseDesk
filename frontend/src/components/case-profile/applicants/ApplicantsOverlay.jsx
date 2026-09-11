@@ -7,7 +7,7 @@ import ApplicantCard from "./ApplicantCard";
 import ApplicantForm, { createApplicantDraft, createApplicantEditDraft } from "./ApplicantForm";
 import { applicantProfileOptions } from "./applicantProfileOptions";
 
-export default function ApplicantsOverlay({ caseItem, onClose }) {
+export default function ApplicantsOverlay({ caseItem, onClose, onEditPrimary }) {
   const [applicants, setApplicants] = useState([]);
   const [availableCases, setAvailableCases] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,7 +98,7 @@ export default function ApplicantsOverlay({ caseItem, onClose }) {
   return createPortal(
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[180] flex justify-end bg-slate-950/25 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <motion.section initial={{ x: 80, opacity: 0.8 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 80, opacity: 0 }} transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }} className="flex h-full w-full max-w-5xl flex-col border-l border-white/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.98),rgba(241,245,249,0.98))] shadow-[-24px_0_80px_rgba(15,23,42,0.16)]">
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/70 bg-white/80 px-5 py-4 backdrop-blur-xl sm:px-7">
+        <header className="relative z-30 flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/70 bg-white/80 px-5 py-4 backdrop-blur-xl sm:px-7">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_10px_25px_rgba(15,23,42,0.18)]"><UserRound className="h-5 w-5" /></div>
             <div className="min-w-0">
@@ -114,7 +114,7 @@ export default function ApplicantsOverlay({ caseItem, onClose }) {
               </button>
               <AnimatePresence>
                 {menuOpen ? (
-                  <motion.div initial={{ opacity: 0, y: -5, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -5, scale: 0.98 }} className="absolute right-0 top-[calc(100%+10px)] z-20 w-[310px] rounded-[1.5rem] border border-slate-200/90 bg-white p-2 shadow-[0_20px_55px_rgba(15,23,42,0.16)]">
+                  <motion.div initial={{ opacity: 0, y: -5, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -5, scale: 0.98 }} className="absolute right-0 top-[calc(100%+10px)] z-40 w-[min(310px,calc(100vw-2rem))] rounded-[1.5rem] border border-slate-200/90 bg-white p-2 shadow-[0_20px_55px_rgba(15,23,42,0.16)]">
                     {applicantProfileOptions.map((option) => {
                       const Icon = option.icon;
                       return (
@@ -132,7 +132,7 @@ export default function ApplicantsOverlay({ caseItem, onClose }) {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-5 py-6 sm:px-7">
+        <div className="relative z-0 flex-1 overflow-y-auto px-5 py-6 sm:px-7">
           <div className="mx-auto max-w-4xl">
             {draft ? (
               <div className="mb-6">
@@ -149,7 +149,14 @@ export default function ApplicantsOverlay({ caseItem, onClose }) {
                 <div className="flex items-end justify-between gap-4 px-1">
                   <div><h3 className="text-sm font-semibold text-slate-950">People on this case</h3><p className="mt-1 text-xs text-slate-400">{applicants.length} {applicants.length === 1 ? "profile" : "profiles"} connected</p></div>
                 </div>
-                {applicants.map((applicant) => <ApplicantCard key={applicant.id} applicant={applicant} onEdit={(item) => { setDraft(createApplicantEditDraft(item)); setFormError(""); }} onRemove={(item) => { setRemoveTarget(item); setFormError(""); }} />)}
+                {applicants.map((applicant) => <ApplicantCard key={applicant.id} applicant={applicant} onEdit={(item) => {
+                  if (item.isPrimary) {
+                    onEditPrimary?.();
+                    return;
+                  }
+                  setDraft(createApplicantEditDraft(item));
+                  setFormError("");
+                }} onRemove={(item) => { setRemoveTarget(item); setFormError(""); }} />)}
               </div>
             )}
           </div>

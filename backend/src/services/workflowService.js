@@ -253,6 +253,22 @@ export const ADDITIONAL_CASE_TYPE_ALIASES = [
     caseType: "Spousal Open Work Permit",
     aliases: ["SOWP", "Spousal OWP", "Spousal Open WP", "Spouse Open Work Permit", "Spousal Open Wok Permit"],
   },
+  {
+    caseType: "PR Card Renewal",
+    aliases: ["Permanent Resident Card Renewal"],
+  },
+  {
+    caseType: "Indian Passport Renewal",
+    aliases: ["India Passport Renewal"],
+  },
+  {
+    caseType: "Canadian Passport Renewal",
+    aliases: ["Canada Passport Renewal"],
+  },
+  {
+    caseType: "OCI Card Application",
+    aliases: ["OCI Application", "OCI Card Apply", "Overseas Citizen of India Card Application"],
+  },
 ];
 
 function normalizeNullableString(value) {

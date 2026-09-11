@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { isCaseTypeOption, listAgencyCaseTypeOptions } from "../src/services/caseTypeOptionsService.js";
 import { canonicalCaseType } from "../src/services/workflowService.js";
-import { isReusableCaseType } from "../../frontend/src/utils/caseTypes.js";
+import { canonicalCaseType as canonicalFrontendCaseType, isReusableCaseType } from "../../frontend/src/utils/caseTypes.js";
 
 test("case type options reject intake answers while retaining custom legal categories", () => {
   assert.equal(isCaseTypeOption("I want to discuss my spousal pr application process"), false);
@@ -34,6 +34,27 @@ test("legacy service labels collapse into the global catalog", () => {
   assert.equal(canonicalCaseType("Canadian Citizenship"), "Canadian Citizenship Grant");
   assert.equal(canonicalCaseType("Spousal and Family Sponsorship"), "Spouse, Partner or Conjugal Sponsorship");
   assert.equal(canonicalCaseType("Work permit / Open Work permit"), "Work Permit");
+});
+
+test("document renewal and OCI application services are global case types", async () => {
+  const db = {
+    case: { findMany: async () => [] },
+    documentTemplate: { findMany: async () => [] },
+    workflowTemplate: { findMany: async () => [] },
+  };
+
+  const options = await listAgencyCaseTypeOptions("agency-1", db);
+
+  assert.ok(options.includes("PR Card Renewal"));
+  assert.ok(options.includes("Indian Passport Renewal"));
+  assert.ok(options.includes("Canadian Passport Renewal"));
+  assert.ok(options.includes("OCI Card Application"));
+  assert.equal(canonicalCaseType("Permanent Resident Card Renewal"), "PR Card Renewal");
+  assert.equal(canonicalCaseType("India Passport Renewal"), "Indian Passport Renewal");
+  assert.equal(canonicalCaseType("Canada Passport Renewal"), "Canadian Passport Renewal");
+  assert.equal(canonicalCaseType("OCI Card Apply"), "OCI Card Application");
+  assert.equal(canonicalFrontendCaseType("Permanent Resident Card Renewal"), "PR Card Renewal");
+  assert.equal(canonicalFrontendCaseType("OCI Card Apply"), "OCI Card Application");
 });
 
 test("lead immigration interests include defaults and agency-specific case types without duplicates", async () => {

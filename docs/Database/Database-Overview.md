@@ -6,7 +6,7 @@ risk: critical
 
 # Database Overview
 
-`backend/prisma/schema.prisma` defines 165 PostgreSQL models. Prisma is initialized by `backend/src/services/prisma/client.js`, with `DATABASE_URL` and optional connection-limit handling; `DIRECT_URL` is used by Prisma tooling/migrations.
+`backend/prisma/schema.prisma` defines the PostgreSQL data model. Prisma is initialized by `backend/src/services/prisma/client.js`, with `DATABASE_URL` and optional connection-limit handling; `DIRECT_URL` is used by Prisma tooling/migrations.
 
 ## Ownership Pattern
 
@@ -23,6 +23,10 @@ risk: critical
 ## Billing and Incentives
 
 [[CaseInvoice]], [[Payment]], [[CasePaymentSchedule]], `CaseInvoiceLine`, `AgencyCustomPaymentLedger`, `CashTransaction`, `CashAllocation`, `CashReconciliation`, `InvoiceRefund`, `PaymentApproval`, `CaseManualLedgerEntry`, `CasePaymentInstallment`, schedule templates, billing/payment settings, fee categories, QuickBooks settings/events, account statements, invoice credit/snapshot records, incentive plans/tiers/role shares/timeline legs/evaluations, and `IncentiveLedgerEntry`.
+
+## Commercial Subscriptions
+
+[[Commercial Subscription]] covers the platform-owned module/feature/limit catalog, plans and prices, workspace subscriptions, dated feature/limit overrides, effective entitlement snapshots, and commercial audit records. These records are deliberately separate from agency-to-client billing.
 
 ## Communications and Calls
 

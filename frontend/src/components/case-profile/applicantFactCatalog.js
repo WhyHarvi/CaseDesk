@@ -30,6 +30,43 @@ export function splitApplicantName(fullName) {
   return { familyName: parts.at(-1), givenNames: parts.slice(0, -1).join(" "), inferred: true };
 }
 
+// Resolve family/given names as one atomic pair. Client Intake is the
+// authoritative source whenever either structured client-name field exists;
+// questionnaire values are a fallback pair and are never mixed field-by-field
+// with client values. This prevents a single name from being duplicated across
+// both PDF boxes when legacy questionnaire data disagrees with Client Intake.
+export function resolveIrccApplicantName(ctx = {}) {
+  const client = ctx.client || {};
+  const applicantIdentity = ctx.formData?.profileQuestionnaires?.applicantIdentity || {};
+  const clientPair = {
+    familyName: String(client.familyName || "").trim(),
+    givenNames: String(client.givenNames || "").trim(),
+  };
+  const questionnairePair = {
+    familyName: String(applicantIdentity.familyName || "").trim(),
+    givenNames: String(applicantIdentity.givenNames || "").trim(),
+  };
+
+  let selected = clientPair;
+  let source = "client";
+  let inferred = false;
+  if (!clientPair.familyName && !clientPair.givenNames) {
+    if (questionnairePair.familyName || questionnairePair.givenNames) {
+      selected = questionnairePair;
+      source = "questionnaire";
+    } else {
+      selected = splitApplicantName(client.fullName);
+      source = "fullName";
+      inferred = Boolean(selected.inferred);
+    }
+  }
+
+  if (!selected.familyName && selected.givenNames) {
+    return { familyName: selected.givenNames, givenNames: "", singleName: true, source, inferred };
+  }
+  return { familyName: selected.familyName || "", givenNames: selected.givenNames || "", singleName: false, source, inferred };
+}
+
 export function isoParts(value) {
   if (!value) return {};
   const date = new Date(value);
@@ -65,16 +102,11 @@ export const APPLICANT_FACTS = {
     sectionKey: "applicantDetails",
     editTarget: { tab: "APPLICANT DETAILS" },
     read: (ctx) => {
-      const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
-      const explicitFamily = applicantIdentity.familyName || ctx.client.familyName || "";
-      const explicitGiven = applicantIdentity.givenNames || ctx.client.givenNames || "";
-      if (!explicitFamily && explicitGiven) {
-        return { value: explicitGiven, status: "review", note: "No family name was recorded. IRCC requires all given names in the family-name field; verify against the passport." };
+      const name = resolveIrccApplicantName(ctx);
+      if (name.singleName) {
+        return { value: name.familyName, status: "review", note: "No family name was recorded. IRCC requires all given names in the family-name field; verify against the passport." };
       }
-      const inferred = splitApplicantName(ctx.client.fullName);
-      const value = explicitFamily || inferred.familyName;
-      const wasInferred = !explicitFamily && Boolean(inferred.familyName);
-      return { value, status: wasInferred && value ? "review" : undefined, note: wasInferred ? "Inferred from the client full name; verify against the passport." : "" };
+      return { value: name.familyName, status: name.inferred && name.familyName ? "review" : undefined, note: name.inferred ? "Inferred from the client full name; verify against the passport." : "" };
     },
   },
   givenNames: {
@@ -82,16 +114,11 @@ export const APPLICANT_FACTS = {
     sectionKey: "applicantDetails",
     editTarget: { tab: "APPLICANT DETAILS" },
     read: (ctx) => {
-      const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
-      const explicitFamily = applicantIdentity.familyName || ctx.client.familyName || "";
-      const explicitGiven = applicantIdentity.givenNames || ctx.client.givenNames || "";
-      if (!explicitFamily && explicitGiven) {
+      const name = resolveIrccApplicantName(ctx);
+      if (name.singleName) {
         return { value: "", status: "review", note: "Left blank under IRCC's single-name rule; the given name is placed in the family-name field." };
       }
-      const inferred = splitApplicantName(ctx.client.fullName);
-      const value = explicitGiven || inferred.givenNames;
-      const wasInferred = !explicitGiven && Boolean(inferred.givenNames);
-      return { value, status: wasInferred && value ? "review" : undefined, note: wasInferred ? "Inferred from the client full name; verify against the passport." : "" };
+      return { value: name.givenNames, status: name.inferred && name.givenNames ? "review" : undefined, note: name.inferred ? "Inferred from the client full name; verify against the passport." : "" };
     },
   },
   dateOfBirth: {
