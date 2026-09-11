@@ -54,7 +54,7 @@ export default function ClientBillingCard({ clientId, clientName, onOpenStatemen
   const [entryPreset, setEntryPreset] = useState(initialEntry);
   // Front desk can record a payment only when Portal Access has already
   // granted financialData and client access; the API repeats both checks.
-  const canRecord = ["admin", "consultant", "frontdesk"].includes(role);
+  const canRecord = ["admin", "consultant", "frontdesk", "manager"].includes(role);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     try {

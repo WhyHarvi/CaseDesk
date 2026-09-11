@@ -44,7 +44,7 @@ QuickBooks invoice creation is recoverable when the provider reports that a Case
 The unified client ledger identifies a QuickBooks receivable by provider transaction ID and, during an interrupted finalization before that ID is saved locally, by the exact QuickBooks document number, total, client, and void state. The local CaseDesk entry remains the displayed source and the matching provider entry supplies payment allocations without adding a second charge. A number collision with a different total or state remains visible for investigation. Already-prefixed document numbers are displayed unchanged.
 
 ## Permissions
-Requires financial capability and Payments page or Billing case tab. Sensitive approvals and configuration add admin/role rules; all records remain agency/case scoped.
+Requires financial capability and Payments page or Billing case tab. In a case Billing workspace, record-payment actions are available to administrators, managers, and the case's assigned RCIC or Case Worker; the existing approval flow still applies when a front-desk Case Worker submits an entry. Sensitive approvals and configuration add admin/role rules; all records remain agency/case scoped.
 
 ## Side Effects
 Creates/voids provider transactions, changes balances, generates PDFs, sends payment notices, and credits/recalculates incentives. Completed collections in explicitly eligible fee categories also append revenue-contest credits; partial/full refunds append capped proportional reversals against the original owner and incentive period. College, government, and disbursement categories are excluded by default.

@@ -127,8 +127,9 @@ test("only cash needs administrator approval — frontdesk's other consultation 
 });
 
 test("case Billing exposes manual payment entry and refreshes effective totals", async () => {
-  const [workspace, sheet, scheduleService, tabs, profile] = await Promise.all([
+  const [workspace, clientBilling, sheet, scheduleService, tabs, profile] = await Promise.all([
     readFile(new URL("../../frontend/src/components/case-profile/CaseBillingWorkspace.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/components/clients/ClientBillingCard.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx", import.meta.url), "utf8"),
     readFile(new URL("../src/services/paymentScheduleService.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/components/case-profile/CaseWorkspaceTabs.jsx", import.meta.url), "utf8"),
@@ -138,7 +139,11 @@ test("case Billing exposes manual payment entry and refreshes effective totals",
   assert.match(workspace, /Record payment/);
   assert.doesNotMatch(workspace, /fixedMethod="Cash"/);
   assert.match(workspace, /restrictCaseId=\{caseItem\.id\}/);
-  assert.match(workspace, /\["admin", "consultant", "frontdesk"\]\.includes\(role\)/);
+  assert.match(workspace, /const \{ role, appUser \} = useAuth\(\);/);
+  assert.match(workspace, /\["rcic", "case-worker"\]\.includes\(assignment\.caseRole\?\.code\)/);
+  assert.match(workspace, /const isCaseOwner = Boolean\(appUser\?\.id && caseOwnerIds\.includes\(appUser\.id\)\);/);
+  assert.match(workspace, /const canRecordCash = \["admin", "manager"\]\.includes\(role\) \|\| isCaseOwner;/);
+  assert.match(clientBilling, /\["admin", "consultant", "frontdesk", "manager"\]\.includes\(role\)/);
   assert.match(sheet, /Cash · CaseDesk only/);
   assert.match(sheet, /approvalRequiredForEntries/);
   assert.match(scheduleService, /\.then\(\(rows\) => rows\.map\(applyLocalCashToInvoice\)\)/);

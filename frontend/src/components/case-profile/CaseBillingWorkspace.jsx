@@ -554,7 +554,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
 }
 
 export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingChanged }) {
-  const { role } = useAuth();
+  const { role, appUser } = useAuth();
   const [invoices, setInvoices] = useState(null);
   const [categories, setCategories] = useState([]);
   const [error, setError] = useState("");
@@ -563,7 +563,18 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
   const [paymentInvoiceId, setPaymentInvoiceId] = useState("");
   const canManage = ["admin", "consultant", "manager"].includes(role);
   const canRefund = ["admin", "accountant"].includes(role);
-  const canRecordCash = ["admin", "consultant", "frontdesk"].includes(role);
+  // RCIC and Case Worker are the two required owners of a case. Their
+  // assignment, rather than their base login role, controls whether they
+  // can record its payments; managers and admins retain workspace oversight.
+  const caseOwnerIds = [
+    caseItem.assignedUserId,
+    caseItem.assignedUser?.id,
+    ...(caseItem.roleAssignments || [])
+      .filter((assignment) => ["rcic", "case-worker"].includes(assignment.caseRole?.code))
+      .map((assignment) => assignment.user?.id),
+  ].filter(Boolean);
+  const isCaseOwner = Boolean(appUser?.id && caseOwnerIds.includes(appUser.id));
+  const canRecordCash = ["admin", "manager"].includes(role) || isCaseOwner;
 
   async function load() {
     setError("");
