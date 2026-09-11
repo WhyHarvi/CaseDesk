@@ -27,7 +27,7 @@ async function requireRoleManager(req, caseId) {
     caseId,
   });
   if (!canManage) {
-    throw createHttpError(403, "Only an administrator or an RCIC can change case roles.", "FORBIDDEN");
+    throw createHttpError(403, "Only an administrator, manager, or RCIC can change case roles.", "FORBIDDEN");
   }
 }
 

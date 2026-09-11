@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   listCollaborationStaff,
   requiredCaseTeamOptions,
+  userCanManageCaseCollaboration,
 } from "../src/services/caseRequiredTeamService.js";
 
 function fakeDb() {
@@ -51,4 +52,41 @@ test("collaboration staff includes active administrators", async () => {
     "frontdesk",
     "manager",
   ]);
+});
+
+test("managers can manage case collaboration without needing an RCIC assignment", async () => {
+  const db = {
+    teamIncentiveRoleAssignment: {
+      async findFirst() {
+        throw new Error("manager authorization must not depend on an RCIC lookup");
+      },
+    },
+    caseRoleAssignment: {
+      async findFirst() {
+        throw new Error("manager authorization must not depend on a case-role lookup");
+      },
+    },
+  };
+
+  assert.equal(
+    await userCanManageCaseCollaboration({
+      agencyId: "agency-1",
+      userId: "manager-1",
+      role: "manager",
+      caseId: "case-1",
+    }, db),
+    true,
+  );
+});
+
+test("front desk still cannot manage case collaboration", async () => {
+  assert.equal(
+    await userCanManageCaseCollaboration({
+      agencyId: "agency-1",
+      userId: "frontdesk-1",
+      role: "frontdesk",
+      caseId: "case-1",
+    }, {}),
+    false,
+  );
 });

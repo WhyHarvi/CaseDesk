@@ -36,7 +36,7 @@ Cases are soft-deleted with `deletedAt`, can be archived, and record stage histo
 The case register's Status filter uses the canonical case statuses and only offers statuses present in the currently loaded Active, Closed, Archived, or Trash register. Stage values such as `Ready` and `Submitted` remain in the separate Stage filter.
 
 ## Permissions
-Case reads use `caseAccessWhere`; case-linked child resources must use case-linked predicates. Staff roles and per-user case page/tab access are both enforced.
+Case reads use `caseAccessWhere`; case-linked child resources must use case-linked predicates. Staff roles and per-user case page/tab access are both enforced. Administrators and managers can manage a case's required RCIC, Case Worker, collaborators, and optional case roles when they can access that case. Consultants can manage Collaboration only when they hold the RCIC team role globally or on that case; front-desk users cannot change case assignments.
 
 ## Side Effects
 Lifecycle, assignments, stage changes, billing, notifications, activity, and incentive calculations can change together.

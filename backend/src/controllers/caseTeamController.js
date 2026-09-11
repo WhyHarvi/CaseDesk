@@ -120,7 +120,7 @@ export async function updateCaseCollaboration(req, res) {
   if (!canManage) {
     throw createHttpError(
       403,
-      "Only an administrator or an RCIC can manage case collaboration.",
+      "Only an administrator, manager, or RCIC can manage case collaboration.",
       "FORBIDDEN",
     );
   }

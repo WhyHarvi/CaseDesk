@@ -213,7 +213,7 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
 
               {!permissions.canManageCollaboration ? (
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                  Collaboration is read-only for your account. Administrators and staff assigned the RCIC team role can manage it.
+                  Collaboration is read-only for your account. Administrators, managers, and staff assigned the RCIC team role can manage it.
                 </div>
               ) : null}
 

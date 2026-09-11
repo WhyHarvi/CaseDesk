@@ -274,7 +274,10 @@ export async function currentRequiredCaseTeam(agencyId, caseId, db = prisma) {
 }
 
 export async function userCanManageCaseCollaboration({ agencyId, userId, role, caseId = null }, db = prisma) {
-  if (role === "admin") return true;
+  // Managers provide operational oversight on cases allowed by the normal
+  // case-access middleware. Assignee eligibility remains constrained to active
+  // staff in this agency by the validators below.
+  if (role === "admin" || role === "manager") return true;
   if (role !== "consultant") return false;
   const roles = roleMap(await ensureRequiredCaseRoles(agencyId, db));
   const rcicRoleId = roles[CASE_TEAM_ROLE_CODES.RCIC].id;
