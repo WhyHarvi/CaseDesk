@@ -6,11 +6,11 @@ import {
 } from "lucide-react";
 import { formatStudyIntake, isStudyPermitCaseType, studyIntakeValue } from "../../utils/studyIntake";
 import { buildCaseTypeFilterOptions } from "../../utils/caseTypes";
+import { buildCaseStatusFilterOptions } from "../../utils/caseStatuses";
 import { CASE_STAGES } from "../../constants/caseStages";
 
 const STAGES = CASE_STAGES;
 
-const STATUSES = ["Active", "Ready", "Submitted", "Closed", "On Hold"];
 const PRIORITIES = ["Normal", "High", "Urgent"];
 
 function SelectControl({ label, value, onChange, children }) {
@@ -62,6 +62,10 @@ export default function CasesCommandBar({
     ...cases.map((item) => studyIntakeValue(item.studyIntakeMonth)).filter(Boolean),
   ])].sort(), [cases, studyIntakeOptions]);
   const visibleCaseTypes = useMemo(() => buildCaseTypeFilterOptions(cases, caseTypeOptions), [cases, caseTypeOptions]);
+  const visibleStatuses = useMemo(
+    () => buildCaseStatusFilterOptions(cases, filters.status),
+    [cases, filters.status],
+  );
 
   const activeFilters = Object.entries(filters || {}).filter(
     ([, value]) => value && value !== "all"
@@ -189,7 +193,7 @@ export default function CasesCommandBar({
               onChange={(value) => updateFilter("status", value)}
             >
               <option value="all">All Statuses</option>
-              {STATUSES.map((status) => (
+              {visibleStatuses.map((status) => (
                 <option key={status} value={status}>
                   {status}
                 </option>

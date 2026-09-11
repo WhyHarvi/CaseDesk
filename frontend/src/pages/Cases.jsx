@@ -30,10 +30,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { formatStudyIntake, isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue, studyIntakeValue } from "../utils/studyIntake";
 import { CASE_STAGES, caseStagesForType } from "../constants/caseStages";
 import { normalizeCaseType } from "../utils/caseTypes";
+import { CASE_STATUSES } from "../utils/caseStatuses";
 
 export const newCaseOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
-const STATUS_OPTIONS = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 const PRIORITY_OPTIONS = ["Low", "Normal", "High", "Urgent"];
 const REGISTER_VIEWS = [
   { id: "active", label: "Active Cases", icon: BriefcaseBusiness },
@@ -1027,7 +1027,7 @@ export function CaseFormDrawer({
                   onChange={onChange}
                   className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
                 >
-                  {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
+                  {CASE_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
                 </select>
               </label>
             </div>

@@ -33,6 +33,8 @@ Indirectly [[QuickBooks Online]], [[Supabase]], [[Microsoft 365]], [[Twilio]], a
 ## Business Rules
 Cases are soft-deleted with `deletedAt`, can be archived, and record stage history. Primary ownership and active assignments govern access and incentives. Required-team rules gate case operations; lifecycle transitions can require billing review.
 
+The case register's Status filter uses the canonical case statuses and only offers statuses present in the currently loaded Active, Closed, Archived, or Trash register. Stage values such as `Ready` and `Submitted` remain in the separate Stage filter.
+
 ## Permissions
 Case reads use `caseAccessWhere`; case-linked child resources must use case-linked predicates. Staff roles and per-user case page/tab access are both enforced.
 

@@ -174,7 +174,7 @@ test("cases use controlled lifecycle values and persistent priority", async () =
   assert.match(controller, /CASE_PRIORITIES = \["Low", "Normal", "High", "Urgent"\]/);
   assert.match(controller, /An active case requires a clear next action/);
   assert.match(page, /name="priority"/);
-  assert.match(page, /STATUS_OPTIONS\.map/);
+  assert.match(page, /CASE_STATUSES\.map/);
   assert.match(page, /editingClientName \|\| "Unknown client"/);
   assert.match(page, /delete payload\.clientId/);
   assert.match(controller, /A case cannot be moved to another client/);
